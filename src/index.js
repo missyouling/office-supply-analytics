@@ -250,8 +250,8 @@ const SPA_HTML = `<!doctype html>
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>办公劳保用品管理系统</title>
-    <script type="module" crossorigin src="/assets/index-DGjYKQLf.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-_RmIDY8i.css">
+    <script type="module" crossorigin src="/assets/index-C-ZXpmyM.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-PfYgnycq.css">
   </head>
   <body>
     <div id="root"></div>
