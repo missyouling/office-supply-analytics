@@ -117,6 +117,8 @@ npm run deploy
 
 部署成功后，Wrangler 会输出你的 Worker 访问地址，例如 `https://office-supply-analytics.<your-subdomain>.workers.dev`。
 
+> 本项目的在线演示地址：**[https://office-supply-analytics.86756610.workers.dev](https://office-supply-analytics.86756610.workers.dev)**
+
 ## API 文档
 
 | 方法 | 路径 | 说明 |
