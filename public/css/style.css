@@ -156,8 +156,18 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .chart-card {
   background: var(--card); border-radius: var(--radius); box-shadow: var(--shadow);
   padding: 16px;
+  position: relative;
 }
 .chart-card h4 { font-size: 14px; color: var(--text-secondary); margin-bottom: 8px; }
+.chart-card .chart-wrapper {
+  position: relative;
+  height: 240px;
+  max-height: 240px;
+}
+.chart-card canvas {
+  max-height: 240px !important;
+  max-width: 100% !important;
+}
 .chart-toggle { display: flex; gap: 4px; margin-bottom: 8px; }
 .toggle-btn {
   padding: 4px 10px; border: 1px solid var(--border); background: transparent;
