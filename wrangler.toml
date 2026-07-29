@@ -11,7 +11,7 @@ compatibility_date = "2025-04-01"
 [[d1_databases]]
 binding = "DB"
 database_name = "office-supply-db"
-database_id = "your-database-id-here"
+database_id = "bb0f6892-bc94-42c2-ac18-5aa20e855b77"
 
 # 静态资源目录（前端 SPA）
 [assets]
