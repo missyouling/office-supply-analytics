@@ -69,15 +69,20 @@ export async function getSupply(db, id) {
   `).bind(id).first();
 }
 export async function createSupply(db, data) {
+  // 获取分类名称（兼容旧 category 列 NOT NULL）
+  const cat = data.category_id ? await db.prepare('SELECT name FROM categories WHERE id=?').bind(data.category_id).first() : null;
+  const catName = cat?.name || '';
   const r = await db.prepare(
-    'INSERT INTO supplies (name,spec,unit,reference_price,safety_stock,category_id,supplier_id,status,remark) VALUES (?,?,?,?,?,?,?,?,?)'
-  ).bind(data.name, data.spec||'', data.unit||'个', data.reference_price||0, data.safety_stock||0, data.category_id||null, data.supplier_id||null, data.status||'active', data.remark||'').run();
+    'INSERT INTO supplies (name,spec,unit,unit_price,reference_price,category,safety_stock,category_id,supplier_id,status,remark) VALUES (?,?,?,?,?,?,?,?,?,?,?)'
+  ).bind(data.name, data.spec||'', data.unit||'个', data.reference_price||0, data.reference_price||0, catName, data.safety_stock||0, data.category_id||null, data.supplier_id||null, data.status||'active', data.remark||'').run();
   return { id: r.meta.last_row_id };
 }
 export async function updateSupply(db, id, data) {
+  const cat = data.category_id ? await db.prepare('SELECT name FROM categories WHERE id=?').bind(data.category_id).first() : null;
+  const catName = cat?.name || '';
   const r = await db.prepare(
-    'UPDATE supplies SET name=?,spec=?,unit=?,reference_price=?,safety_stock=?,category_id=?,supplier_id=?,status=?,remark=?,updated_at=datetime(\'now\',\'+8 hours\') WHERE id=?'
-  ).bind(data.name, data.spec||'', data.unit||'个', data.reference_price||0, data.safety_stock||0, data.category_id||null, data.supplier_id||null, data.status||'active', data.remark||'', id).run();
+    'UPDATE supplies SET name=?,spec=?,unit=?,unit_price=?,reference_price=?,category=?,safety_stock=?,category_id=?,supplier_id=?,status=?,remark=?,updated_at=datetime(\'now\',\'+8 hours\') WHERE id=?'
+  ).bind(data.name, data.spec||'', data.unit||'个', data.reference_price||0, data.reference_price||0, catName, data.safety_stock||0, data.category_id||null, data.supplier_id||null, data.status||'active', data.remark||'', id).run();
   return r.meta.changes > 0;
 }
 export async function deleteSupply(db, id) {
@@ -88,11 +93,13 @@ export async function deleteSupply(db, id) {
 }
 export async function batchCreateSupplies(db, items) {
   let ok = 0, err = 0;
-  const stmt = db.prepare('INSERT INTO supplies (name,spec,unit,reference_price,safety_stock,category_id,remark) VALUES (?,?,?,?,?,?,?)');
+  const stmt = db.prepare('INSERT INTO supplies (name,spec,unit,unit_price,reference_price,category,safety_stock,category_id,remark) VALUES (?,?,?,?,?,?,?,?,?)');
   for (const item of items) {
     try {
       if (!item.name) { err++; continue; }
-      await stmt.bind(item.name, item.spec||'', item.unit||'个', item.reference_price||0, item.safety_stock||0, item.category_id||null, item.remark||'').run();
+      const cat = item.category_id ? await db.prepare('SELECT name FROM categories WHERE id=?').bind(item.category_id).first() : null;
+      const catName = cat?.name || item.category_name || '';
+      await stmt.bind(item.name, item.spec||'', item.unit||'个', item.reference_price||0, item.reference_price||0, catName, item.safety_stock||0, item.category_id||null, item.remark||'').run();
       ok++;
     } catch { err++; }
   }
