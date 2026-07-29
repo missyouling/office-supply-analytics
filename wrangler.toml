@@ -1,0 +1,18 @@
+name = "office-supply-analytics"
+main = "src/index.js"
+compatibility_date = "2025-04-01"
+
+# =====================================================
+# Cloudflare D1 数据库绑定
+# 首次部署前请先在 Cloudflare Dashboard 中创建 D1 数据库：
+#   wrangler d1 create office-supply-db
+# 然后将你的 database_id 填入下方
+# =====================================================
+[[d1_databases]]
+binding = "DB"
+database_name = "office-supply-db"
+database_id = "your-database-id-here"
+
+# 静态资源目录（前端 SPA）
+[assets]
+directory = "./public"

@@ -1,0 +1,20 @@
+{
+  "name": "office-supply-analytics",
+  "version": "1.0.0",
+  "description": "办公劳保用品采购与用量分析 Web 应用",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "init-db": "wrangler d1 execute office-supply-db --file=./schema.sql",
+    "init-db-remote": "wrangler d1 execute office-supply-db --remote --file=./schema.sql"
+  },
+  "dependencies": {
+    "hono": "^4.6.0",
+    "pdf-lib": "^1.17.1",
+    "@pdf-lib/fontkit": "^1.1.1"
+  },
+  "devDependencies": {
+    "wrangler": "^3.99.0"
+  }
+}

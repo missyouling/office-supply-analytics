@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>办公劳保用品采购与用量分析</title>
+  <link rel="stylesheet" href="/css/style.css">
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <!-- 顶部导航 -->
+  <header class="app-header">
+    <div class="container">
+      <h1 class="app-title">📋 办公劳保用品采购系统</h1>
+      <nav class="tab-nav" id="tabNav">
+        <button class="tab-btn active" data-tab="dict">📖 用品字典</button>
+        <button class="tab-btn" data-tab="entry">📝 采购录入</button>
+        <button class="tab-btn" data-tab="analytics">📊 数据分析</button>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container">
+    <!-- 模块1: 用品字典 -->
+    <section id="tab-dict" class="tab-content active">
+      <div class="section-header">
+        <h2>📖 办公用品字典</h2>
+        <button class="btn btn-primary" onclick="showSupplyForm()">＋ 新增用品</button>
+      </div>
+      <!-- 搜索筛选栏 -->
+      <div class="search-bar">
+        <input type="text" id="dictSearch" class="input" placeholder="搜索品名 / 规格..." oninput="debounceSearch()">
+        <select id="dictCategory" class="input select" onchange="loadSupplies()">
+          <option value="all">全部分类</option>
+          <option value="办公文具">办公文具</option>
+          <option value="劳保用品">劳保用品</option>
+          <option value="清洁用品">清洁用品</option>
+          <option value="耗材">耗材</option>
+          <option value="其他">其他</option>
+        </select>
+      </div>
+      <!-- 表格 -->
+      <div class="table-wrapper">
+        <table class="data-table" id="supplyTable">
+          <thead>
+            <tr>
+              <th>品名</th><th>规格</th><th>单价</th><th>分类</th><th>备注</th><th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="supplyTableBody">
+            <tr><td colspan="6" class="loading-text">加载中...</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- 用品表单弹窗 -->
+      <div class="modal-overlay" id="supplyModal" style="display:none;">
+        <div class="modal">
+          <h3 id="supplyFormTitle">新增用品</h3>
+          <form id="supplyForm" onsubmit="return saveSupply(event)">
+            <input type="hidden" id="supplyFormId" value="">
+            <div class="form-row">
+              <label>品名 *<input type="text" id="f_name" class="input" required></label>
+              <label>规格<input type="text" id="f_spec" class="input"></label>
+            </div>
+            <div class="form-row">
+              <label>单价 *<input type="number" step="0.01" min="0" id="f_price" class="input" required></label>
+              <label>分类 *<select id="f_category" class="input select" required>
+                <option value="">选择分类</option>
+                <option value="办公文具">办公文具</option>
+                <option value="劳保用品">劳保用品</option>
+                <option value="清洁用品">清洁用品</option>
+                <option value="耗材">耗材</option>
+                <option value="其他">其他</option>
+              </select></label>
+            </div>
+            <label class="full-label">备注<textarea id="f_remark" class="input" rows="2"></textarea></label>
+            <div class="form-actions">
+              <button type="button" class="btn btn-secondary" onclick="closeModal('supplyModal')">取消</button>
+              <button type="submit" class="btn btn-primary">保存</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </section>
+
+    <!-- 模块2: 采购录入 -->
+    <section id="tab-entry" class="tab-content">
+      <div class="section-header">
+        <h2>📝 采购录入</h2>
+      </div>
+      <!-- 搜索用品 -->
+      <div class="search-bar entry-search">
+        <div class="search-input-wrap">
+          <input type="text" id="entrySearch" class="input" placeholder="搜索用品添加到清单（品名/规格）..." oninput="debounceEntrySearch()">
+          <div id="entrySuggestions" class="suggestions-box" style="display:none;"></div>
+        </div>
+      </div>
+      <!-- 采购清单 -->
+      <div class="table-wrapper">
+        <table class="data-table" id="entryTable">
+          <thead>
+            <tr><th>品名</th><th>规格</th><th>单价</th><th>数量</th><th>小计</th><th>操作</th></tr>
+          </thead>
+          <tbody id="entryTableBody">
+            <tr><td colspan="6" class="loading-text">请搜索添加用品</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <!-- 采购信息 -->
+      <div class="entry-footer">
+        <div class="entry-summary">
+          <label>采购日期：<input type="date" id="purchaseDate" class="input"></label>
+          <span class="total-label">合计：<strong id="entryTotal">¥0.00</strong></span>
+        </div>
+        <div class="entry-actions">
+          <button class="btn btn-primary" onclick="savePurchase()">💾 保存采购单</button>
+          <button class="btn btn-secondary" onclick="exportPurchasePdf()">📄 导出采购单 PDF</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 模块3: 数据分析 -->
+    <section id="tab-analytics" class="tab-content">
+      <div class="section-header">
+        <h2>📊 数据分析</h2>
+        <button class="btn btn-primary" onclick="exportReportPdf()">📄 导出分析报告 PDF</button>
+      </div>
+      <!-- 筛选条件 -->
+      <div class="search-bar analytics-filters">
+        <select id="anaType" class="input select" onchange="onAnaTypeChange()">
+          <option value="monthly">按月</option>
+          <option value="half-yearly">按半年</option>
+          <option value="yearly">按年度</option>
+        </select>
+        <input type="text" id="anaDate" class="input" onchange="loadAnalytics()">
+        <select id="anaCategory" class="input select" onchange="loadAnalytics()">
+          <option value="all">全部分类</option>
+          <option value="办公文具">办公文具</option>
+          <option value="劳保用品">劳保用品</option>
+          <option value="清洁用品">清洁用品</option>
+          <option value="耗材">耗材</option>
+        </select>
+      </div>
+      <!-- 图表区域 -->
+      <div class="charts-grid">
+        <div class="chart-card">
+          <h4>各分类用量/金额</h4>
+          <div class="chart-toggle">
+            <button class="toggle-btn active" data-mode="amount" onclick="toggleChartMode(this)">金额</button>
+            <button class="toggle-btn" data-mode="quantity" onclick="toggleChartMode(this)">数量</button>
+          </div>
+          <canvas id="barChart" height="240"></canvas>
+        </div>
+        <div class="chart-card">
+          <h4>购买频次趋势</h4>
+          <canvas id="lineChart" height="240"></canvas>
+        </div>
+        <div class="chart-card">
+          <h4>分类成本占比</h4>
+          <canvas id="pieChart" height="240"></canvas>
+        </div>
+      </div>
+      <!-- 优化建议 -->
+      <div class="suggestions-section" id="suggestionsArea">
+        <h3>💡 优化建议</h3>
+        <div id="suggestionsList"><p class="loading-text">加载中...</p></div>
+      </div>
+    </section>
+  </main>
+
+  <!-- Toast 消息 -->
+  <div id="toast" class="toast"></div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/app.js"></script>
+  <script src="/js/pdf-export.js"></script>
+</body>
+</html>
