@@ -189,10 +189,53 @@ app.get('/api/purchases/:id/pdf', async (c) => {
   try {
     const p = await getPurchaseDetail(c.env.DB, Number(c.req.param('id')));
     if (!p) return c.json({ ok: false, error: '不存在' }, 404);
-    const pdf = await generatePurchasePdf(p, c.env);
-    c.header('Content-Type', 'application/pdf');
-    c.header('Content-Disposition', `attachment; filename="${p.order_no}.pdf"`);
-    return c.body(pdf);
+    // 返回打印友好 HTML（浏览器原生渲染中文，支持打印为 PDF）
+    const items = (p.items || []).map((item, i) => `
+      <tr${i % 2 === 0 ? ' class="even"' : ''}>
+        <td>${i + 1}</td>
+        <td>${item.supply_name || ''}</td>
+        <td>${item.supply_spec || ''}</td>
+        <td class="num">${item.unit || ''}</td>
+        <td class="num">¥${Number(item.unit_price).toFixed(2)}</td>
+        <td class="num">${item.quantity}</td>
+        <td class="num">¥${Number(item.subtotal).toFixed(2)}</td>
+      </tr>`).join('');
+    const html = `<!doctype html>
+<html><head><meta charset="utf-8"><title>${p.order_no || '采购单'}</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:"Microsoft YaHei","PingFang SC","Noto Sans SC",sans-serif;padding:40px 50px;color:#333;font-size:14px}
+h1{font-size:24px;margin-bottom:6px}
+.meta{color:#666;font-size:13px;margin-bottom:20px;display:flex;justify-content:space-between}
+table{width:100%;border-collapse:collapse;margin-bottom:24px}
+th{background:#1e40af;color:#fff;padding:8px 6px;text-align:left;font-size:13px}
+td{padding:7px 6px;border-bottom:1px solid #e5e7eb;font-size:13px}
+tr.even td{background:#f8fafc}
+.num{text-align:right;font-family:"Courier New",monospace}
+.total{font-size:18px;font-weight:bold;color:#dc2626;text-align:right;margin-bottom:30px}
+.footer{color:#999;font-size:11px;border-top:1px solid #ddd;padding-top:12px;display:flex;justify-content:space-between}
+@media print{body{padding:20px 30px}th{background:#1e40af!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}}
+</style></head><body>
+<h1>📋 采购单</h1>
+<div class="meta">
+  <span><strong>单号：</strong>${p.order_no || ''}</span>
+  <span><strong>日期：</strong>${p.purchase_date || ''}</span>
+  <span><strong>状态：</strong>${p.status === 'completed' ? '已完成' : p.status === 'draft' ? '草稿' : p.status || ''}</span>
+</div>
+<table><thead><tr>
+  <th style="width:40px">序号</th><th>品名</th><th>规格</th><th style="width:50px">单位</th>
+  <th style="width:80px">单价</th><th style="width:60px">数量</th><th style="width:90px">小计</th>
+</tr></thead><tbody>
+${items}
+</tbody></table>
+<div class="total">合计：¥${Number(p.total_amount).toFixed(2)}</div>
+<div class="footer">
+  <span>制单日期：${p.purchase_date || ''}</span>
+  <span>采购单号：${p.order_no || ''}</span>
+</div>
+<script>if(new URLSearchParams(location.search).get('print')==='1')setTimeout(()=>window.print(),300)</script>
+</body></html>`;
+    return c.html(html);
   } catch (e) { return c.json({ ok: false, error: e.message }, 500); }
 });
 app.get('/api/purchases/:id/excel', async (c) => {

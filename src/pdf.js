@@ -1,6 +1,6 @@
 // =============================================
 // PDF 生成模块 - 基于 pdf-lib
-// 支持 CJK 中文字体（从 CDN 动态加载 Noto Sans SC）
+// 支持 CJK 中文字体（从 CDN 动态加载 Noto Sans CJK SC）
 // =============================================
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
 
@@ -8,8 +8,8 @@ import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
 let fontCache = null;
 let fontPromise = null;
 
-// Noto Sans SC 字体 CDN 地址（OTF 格式）
-const FONT_URL = 'https://github.com/notofonts/noto-cjk/raw/main/Sans/OTF/SimplifiedChinese/NotoSansSC-Regular.otf';
+// 中文字体 URL（Google Fonts TTF，仅 3MB，比 OTF 16MB 小很多）
+const FONT_URL = 'https://fonts.gstatic.com/s/notosanssc/v36/k3kCo84MPvpLmixcA63oeAL7Iqp5IZJF9bmaG9_EnYxNbPzS5HE.ttf';
 
 /**
  * 获取中文字体（带单次获取缓存）
@@ -36,35 +36,31 @@ async function getCjkFont() {
 }
 
 /**
- * 动态导入并注册 fontkit（pdf-lib 需要它来处理 OTF/CFF 字体）
- * 注：@pdf-lib/fontkit 是跨平台的纯 JS 实现
- */
-async function registerFontkit(pdfDoc) {
-  try {
-    const fontkit = await import('@pdf-lib/fontkit');
-    pdfDoc.registerFontkit(fontkit.default || fontkit);
-    return true;
-  } catch (e) {
-    console.warn('fontkit not available, OTF fonts may not work:', e.message);
-    return false;
-  }
-}
-
-/**
- * 尝试嵌入中文字体，失败时回退到标准 Helvetica
+ * 尝试嵌入中文字体（OTF），失败时回退到标准 Helvetica
  */
 async function embedCjkFont(pdfDoc) {
   try {
     const fontBytes = await getCjkFont();
     if (fontBytes) {
-      // 注册 fontkit（如果是 OTF 格式需要）
-      await registerFontkit(pdfDoc);
-      return await pdfDoc.embedFont(fontBytes);
+      // OTF 字体需要 fontkit 注册
+      try {
+        const { default: fontkit } = await import('@pdf-lib/fontkit');
+        pdfDoc.registerFontkit(fontkit);
+      } catch (e) {
+        console.warn('fontkit not available, font may not be embeddable:', e.message);
+        // 即使没有 fontkit，某些格式仍可工作
+      }
+      try {
+        return await pdfDoc.embedFont(fontBytes);
+      } catch (e) {
+        console.warn('Failed to embed OTF font, trying fallback:', e.message);
+      }
     }
   } catch (e) {
-    console.warn('Failed to embed CJK font, falling back to Helvetica:', e.message);
+    console.warn('Failed to load CJK font, falling back to Helvetica:', e.message);
   }
-  // 回退：使用标准 Helvetica（仅支持英文/数字）
+  // 回退：使用标准 Helvetica（仅支持英文/数字/符号）
+  console.warn('Using Helvetica fallback - Chinese characters will fail');
   return await pdfDoc.embedFont(StandardFonts.Helvetica);
 }
 
