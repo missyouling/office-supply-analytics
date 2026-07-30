@@ -74,6 +74,14 @@ app.get('/api/supplies/all', async (c) => {
     return c.json({ ok: true, items: r.items });
   } catch (e) { return c.json({ ok: false, error: e.message }, 500); }
 });
+// 获取所有单位（去重）— 必须在 :id 路由之前
+app.get('/api/supplies/units', async (c) => {
+  try {
+    const rows = await c.env.DB.prepare('SELECT DISTINCT unit FROM supplies WHERE unit IS NOT NULL AND unit!=\'\' ORDER BY unit').all();
+    const units = rows.results.map(r => r.unit);
+    return c.json({ ok: true, units });
+  } catch (e) { return c.json({ ok: false, error: e.message }, 500); }
+});
 app.get('/api/supplies/:id', async (c) => {
   try { const s = await getSupply(c.env.DB, Number(c.req.param('id'))); if (!s) return c.json({ ok: false, error: '不存在' }, 404);
     return c.json({ ok: true, ...s }); }
@@ -97,7 +105,9 @@ app.delete('/api/supplies/:id', async (c) => {
 // 批量导入 (CSV)
 app.post('/api/supplies/import', async (c) => {
   try {
-    const body = await c.req.text();
+    let body = await c.req.text();
+    // 移除 UTF-8 BOM
+    if (body.charCodeAt(0) === 0xFEFF) body = body.slice(1);
     const lines = body.split('\n').filter(Boolean);
     if (lines.length < 2) return c.json({ ok: false, error: '数据不足（至少含表头和一行数据）' }, 400);
     // 解析 CSV: 品名,规格,单位,参考单价,安全库存,分类(名称),备注
@@ -239,8 +249,8 @@ const SPA_HTML = `<!doctype html>
   <head><meta charset="UTF-8" /><link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>办公劳保用品管理系统</title>
-    <script type="module" crossorigin src="/assets/index-BxjpJ2Wp.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-D_1zzoEp.css">
+    <script type="module" crossorigin src="/assets/index-COCeC128.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-DpShz78G.css">
   </head>
   <body><div id="root"></div></body>
 </html>`;
