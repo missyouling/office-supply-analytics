@@ -137,7 +137,7 @@ export async function getPurchaseDetail(db, id) {
   const p = await db.prepare('SELECT * FROM purchases WHERE id=?').bind(id).first();
   if (!p) return null;
   const items = (await db.prepare(`
-    SELECT pi.*, s.name as supply_name, s.spec as supply_spec, s.unit
+    SELECT pi.*, s.name as supply_name, s.spec as supply_spec, s.unit, s.reference_price
     FROM purchase_items pi JOIN supplies s ON pi.supply_id=s.id WHERE pi.purchase_id=? ORDER BY pi.id
   `).bind(id).all()).results;
   return { ...p, items };
