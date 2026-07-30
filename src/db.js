@@ -149,10 +149,10 @@ export async function createPurchase(db, { purchase_date, items, status='confirm
   total = Math.round(total * 100) / 100;
   const pr = await db.prepare('INSERT INTO purchases (order_no, purchase_date, total_amount, status, remark) VALUES (?,?,?,?,?)').bind(order_no, purchase_date, total, status, remark).run();
   const pid = pr.meta.last_row_id;
-  const stmt = db.prepare('INSERT INTO purchase_items (purchase_id, supply_id, quantity, unit_price, subtotal) VALUES (?,?,?,?,?)');
+  const stmt = db.prepare('INSERT INTO purchase_items (purchase_id, supply_id, quantity, unit_price, subtotal, date) VALUES (?,?,?,?,?,?)');
   for (const i of items) {
     const sub = Math.round((i.unit_price||0) * (i.quantity||0) * 100) / 100;
-    await stmt.bind(pid, i.supply_id, i.quantity, i.unit_price, sub).run();
+    await stmt.bind(pid, i.supply_id, i.quantity, i.unit_price, sub, i.date || purchase_date).run();
   }
   return { id: pid, order_no };
 }
@@ -165,10 +165,10 @@ export async function updatePurchase(db, id, { purchase_date, items, status, rem
   await db.prepare('UPDATE purchases SET purchase_date=?, total_amount=?, status=?, remark=?, updated_at=datetime(\'now\',\'+8 hours\') WHERE id=?').bind(purchase_date||existing.purchase_date, total, status||existing.status, remark||existing.remark, id).run();
   // 重建明细：先删后插
   await db.prepare('DELETE FROM purchase_items WHERE purchase_id=?').bind(id).run();
-  const stmt = db.prepare('INSERT INTO purchase_items (purchase_id, supply_id, quantity, unit_price, subtotal) VALUES (?,?,?,?,?)');
+  const stmt = db.prepare('INSERT INTO purchase_items (purchase_id, supply_id, quantity, unit_price, subtotal, date) VALUES (?,?,?,?,?,?)');
   for (const i of items) {
     const sub = Math.round((i.unit_price||0) * (i.quantity||0) * 100) / 100;
-    await stmt.bind(id, i.supply_id, i.quantity, i.unit_price, sub).run();
+    await stmt.bind(id, i.supply_id, i.quantity, i.unit_price, sub, i.date || purchase_date || existing.purchase_date).run();
   }
   return { id, order_no: existing.order_no };
 }

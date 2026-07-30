@@ -62,6 +62,7 @@ CREATE TABLE IF NOT EXISTS purchase_items (
   quantity INTEGER NOT NULL,
   unit_price REAL NOT NULL,
   subtotal REAL NOT NULL,
+  date TEXT,
   FOREIGN KEY (purchase_id) REFERENCES purchases(id) ON DELETE CASCADE,
   FOREIGN KEY (supply_id) REFERENCES supplies(id) ON DELETE RESTRICT
 );

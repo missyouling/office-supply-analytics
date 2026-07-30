@@ -312,8 +312,8 @@ const SPA_HTML = `<!doctype html>
   <head><meta charset="UTF-8" /><link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>办公劳保用品管理系统</title>
-    <script type="module" crossorigin src="/assets/index-0ZTlF82D.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-CaCCorY9.css">
+    <script type="module" crossorigin src="/assets/index-wIwPeTQ2.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-N3uRaR-f.css">
   </head>
   <body><div id="root"></div></body>
 </html>`;
