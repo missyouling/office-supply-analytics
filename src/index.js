@@ -105,7 +105,16 @@ app.delete('/api/supplies/:id', async (c) => {
 // 批量导入 (CSV)
 app.post('/api/supplies/import', async (c) => {
   try {
-    let body = await c.req.text();
+    const buf = await c.req.arrayBuffer();
+    let body = '';
+    // 尝试 UTF-8 解码
+    try {
+      body = new TextDecoder('utf-8', { fatal: false }).decode(buf);
+    } catch { body = ''; }
+    // 如果出现替换字符，尝试 GBK
+    if (body.indexOf('\uFFFD') >= 0) {
+      try { body = new TextDecoder('gbk', { fatal: false }).decode(buf); } catch { /* 保留 UTF-8 */ }
+    }
     // 移除 UTF-8 BOM
     if (body.charCodeAt(0) === 0xFEFF) body = body.slice(1);
     const lines = body.split('\n').filter(Boolean);
@@ -256,7 +265,7 @@ const SPA_HTML = `<!doctype html>
   <head><meta charset="UTF-8" /><link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>办公劳保用品管理系统</title>
-    <script type="module" crossorigin src="/assets/index-BLqIK46E.js"></script>
+    <script type="module" crossorigin src="/assets/index-BImq9Dkk.js"></script>
     <link rel="stylesheet" crossorigin href="/assets/index-BY3zlIgO.css">
   </head>
   <body><div id="root"></div></body>
