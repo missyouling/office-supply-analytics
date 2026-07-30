@@ -222,3 +222,30 @@ export async function getSuggestions(db, query) {
 
   return { suggestions };
 }
+// ------ 多月度趋势（图表用）------
+export async function getMonthlyTrend(db, { type='monthly', date, months=12 }) {
+  const d = date || new Date().toISOString().substring(0,7);
+  const [y, m] = d.split('-').map(Number);
+  const result = [];
+  for (let i = 0; i < months; i++) {
+    let targetM = m - i;
+    let targetY = y;
+    while (targetM < 1) { targetM += 12; targetY--; }
+    const ms = String(targetM).padStart(2,'0');
+    const period = `${targetY}-${ms}`;
+    const row = await db.prepare(`
+      SELECT COALESCE(SUM(p.total_amount),0) as amount,
+             COALESCE(SUM(pi.quantity),0) as quantity,
+             COUNT(DISTINCT p.id) as cnt
+      FROM purchases p JOIN purchase_items pi ON pi.purchase_id=p.id
+      WHERE p.purchase_date LIKE '${period}%'
+    `).first();
+    result.push({
+      period,
+      amount: row.amount || 0,
+      quantity: row.quantity || 0,
+      count: row.cnt || 0,
+    });
+  }
+  return result.reverse();
+}

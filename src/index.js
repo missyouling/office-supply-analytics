@@ -13,7 +13,7 @@ import {
   exportsPurchasesCsv, exportPurchaseCsv, resetSystem,
 } from './db.js';
 import { generatePurchasePdf, generateReportPdf } from './pdf.js';
-import { getAnalyticsSummary, getCategoryTrend, getFrequency, getTopItems, getPriceAnomaly, getSuggestions } from './analytics.js';
+import { getAnalyticsSummary, getCategoryTrend, getFrequency, getTopItems, getPriceAnomaly, getSuggestions, getMonthlyTrend } from './analytics.js';
 
 const app = new Hono();
 app.use('*', cors());
@@ -239,6 +239,10 @@ app.get('/api/analytics/suggestions', async (c) => {
   try { return c.json({ ok: true, ...await getSuggestions(c.env.DB, c.req.query()) }); }
   catch (e) { return c.json({ ok: false, error: e.message }, 500); }
 });
+app.get('/api/analytics/trend', async (c) => {
+  try { return c.json({ ok: true, trend: await getMonthlyTrend(c.env.DB, c.req.query()) }); }
+  catch (e) { return c.json({ ok: false, error: e.message }, 500); }
+});
 app.post('/api/analytics/report-pdf', async (c) => {
   try {
     const body = await c.req.json();
@@ -265,7 +269,7 @@ const SPA_HTML = `<!doctype html>
   <head><meta charset="UTF-8" /><link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>办公劳保用品管理系统</title>
-    <script type="module" crossorigin src="/assets/index-BImq9Dkk.js"></script>
+    <script type="module" crossorigin src="/assets/index-BboLYHIW.js"></script>
     <link rel="stylesheet" crossorigin href="/assets/index-BY3zlIgO.css">
   </head>
   <body><div id="root"></div></body>
