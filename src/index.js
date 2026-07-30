@@ -10,7 +10,7 @@ import {
   listSuppliers, getSupplier, createSupplier, updateSupplier, deleteSupplier,
   listSupplies, getSupply, createSupply, updateSupply, deleteSupply, batchCreateSupplies, exportSuppliesCsv,
   listPurchases, getPurchaseDetail, createPurchase, updatePurchase, deletePurchase, copyPurchase,
-  exportsPurchasesCsv, exportPurchaseCsv,
+  exportsPurchasesCsv, exportPurchaseCsv, resetSystem,
 } from './db.js';
 import { generatePurchasePdf, generateReportPdf } from './pdf.js';
 import { getAnalyticsSummary, getCategoryTrend, getFrequency, getTopItems, getPriceAnomaly, getSuggestions } from './analytics.js';
@@ -243,14 +243,21 @@ app.post('/api/analytics/report-pdf', async (c) => {
 // ============ 健康检查 ============
 app.get('/api/health', (c) => c.json({ ok: true, time: new Date().toISOString() }));
 
+// 系统重置 — 清除所有数据
+app.post('/api/system/reset', async (c) => {
+  try {
+    return c.json(await resetSystem(c.env.DB));
+  } catch (e) { return c.json({ ok: false, error: e.message }, 500); }
+});
+
 // ============ SPA 回退 ============
 const SPA_HTML = `<!doctype html>
 <html lang="zh-CN">
   <head><meta charset="UTF-8" /><link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>办公劳保用品管理系统</title>
-    <script type="module" crossorigin src="/assets/index-COCeC128.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-DpShz78G.css">
+    <script type="module" crossorigin src="/assets/index-BLqIK46E.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-BY3zlIgO.css">
   </head>
   <body><div id="root"></div></body>
 </html>`;

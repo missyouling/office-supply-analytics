@@ -200,3 +200,12 @@ export async function exportPurchaseCsv(db, purchaseId) {
   }
   return rows.map(r => r.join(',')).join('\n');
 }
+// ------ 系统重置 ------
+export async function resetSystem(db) {
+  await db.prepare('DELETE FROM purchase_items').run();
+  await db.prepare('DELETE FROM purchases').run();
+  await db.prepare('DELETE FROM supplies').run();
+  await db.prepare('DELETE FROM suppliers').run();
+  await db.prepare('DELETE FROM categories').run();
+  return { ok: true };
+}
