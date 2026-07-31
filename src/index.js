@@ -10,7 +10,9 @@ import {
   listSuppliers, getSupplier, createSupplier, updateSupplier, deleteSupplier,
   listSupplies, getSupply, createSupply, updateSupply, deleteSupply, batchCreateSupplies, exportSuppliesCsv,
   listPurchases, getPurchaseDetail, createPurchase, updatePurchase, deletePurchase, copyPurchase,
-  exportsPurchasesCsv, exportPurchaseCsv, resetSystem,
+  exportsPurchasesCsv, exportPurchaseCsv, listUnpaidPurchases, resetSystem,
+  listBackups, createBackup, restoreBackup, deleteBackup,
+  listPaymentRequests, getPaymentRequest, createPaymentRequest, updatePaymentRequest, deletePaymentRequest,
 } from './db.js';
 import { generatePurchasePdf, generateReportPdf } from './pdf.js';
 import { getAnalyticsSummary, getCategoryTrend, getFrequency, getTopItems, getPriceAnomaly, getSuggestions, getMonthlyTrend } from './analytics.js';
@@ -77,9 +79,25 @@ app.get('/api/supplies/all', async (c) => {
 // 获取所有单位（去重）— 必须在 :id 路由之前
 app.get('/api/supplies/units', async (c) => {
   try {
-    const rows = await c.env.DB.prepare('SELECT DISTINCT unit FROM supplies WHERE unit IS NOT NULL AND unit!=\'\' ORDER BY unit').all();
-    const units = rows.results.map(r => r.unit);
-    return c.json({ ok: true, units });
+    const rows = await c.env.DB.prepare("SELECT DISTINCT unit FROM supplies WHERE unit IS NOT NULL AND unit!='' ORDER BY unit").all();
+    let units = rows.results.map(r => r.unit);
+    // 检查是否有新单位需要加入（从 supplies 表中收集所有未在预设列表中的）
+    const defaults = ['个','包','箱','瓶','支','双','卷','盒','条','袋'];
+    const all = [...units];
+    // 同时从最近新增的用品中提取单位
+    const recent = await c.env.DB.prepare("SELECT DISTINCT unit FROM supplies WHERE unit IS NOT NULL AND unit!='' AND unit NOT IN ('个','包','箱','瓶','支','双','卷','盒','条','袋') ORDER BY id DESC LIMIT 20").all();
+    const news = (recent.results || []).map(r => r.unit);
+    for (const u of news) { if (!all.includes(u)) all.push(u); }
+    return c.json({ ok: true, units: all });
+  } catch (e) { return c.json({ ok: false, error: e.message }, 500); }
+});
+app.get('/api/supplies/export', async (c) => {
+  try {
+    const { keyword, category_id, status } = c.req.query();
+    const csv = '\uFEFF' + await exportSuppliesCsv(c.env.DB, { keyword, category_id, status });
+    c.header('Content-Type', 'text/csv;charset=utf-8');
+    c.header('Content-Disposition', 'attachment; filename="supplies.csv"');
+    return c.body(csv);
   } catch (e) { return c.json({ ok: false, error: e.message }, 500); }
 });
 app.get('/api/supplies/:id', async (c) => {
@@ -119,35 +137,43 @@ app.post('/api/supplies/import', async (c) => {
     if (body.charCodeAt(0) === 0xFEFF) body = body.slice(1);
     const lines = body.split('\n').filter(Boolean);
     if (lines.length < 2) return c.json({ ok: false, error: '数据不足（至少含表头和一行数据）' }, 400);
-    // 解析 CSV: 品名,规格,单位,参考单价,安全库存,分类(名称),备注
+    // 按表头识别列位置（兼容：导出格式 品名,规格,单位,参考单价,分类,供应商,状态,备注 / 新模板 品名,规格,单位,参考单价,分类名称,备注 / 旧模板含安全库存）
+    const header = lines[0].split(',').map(s => s.trim());
+    let nameIdx = 0, specIdx = 1, unitIdx = 2, priceIdx = 3, catIdx = 4, remarkIdx = -1;
+    if (header.some(h => h.includes('品名'))) {
+      nameIdx = header.findIndex(h => h.includes('品名'));
+      specIdx = header.findIndex(h => h.includes('规格'));
+      unitIdx = header.findIndex(h => h.includes('单位'));
+      priceIdx = header.findIndex(h => h.includes('参考单价') || h.includes('单价'));
+      catIdx = header.findIndex(h => h.includes('分类'));
+      remarkIdx = header.findIndex(h => h.includes('备注'));
+    } else {
+      // 无表头时按新模板位置：品名,规格,单位,参考单价,分类名称,备注
+      remarkIdx = 5;
+    }
+    if (nameIdx < 0) nameIdx = 0;
+    if (specIdx < 0) specIdx = 1;
+    if (unitIdx < 0) unitIdx = 2;
+    if (priceIdx < 0) priceIdx = 3;
+    if (catIdx < 0) catIdx = 4;
     const items = [];
     for (let i = 1; i < lines.length; i++) {
       const cols = lines[i].split(',').map(s => s.trim());
-      if (!cols[0]) continue;
+      if (!cols[nameIdx]) continue;
       // 查找分类 ID
       let catId = null;
-      if (cols[5]) {
-        const cat = await c.env.DB.prepare('SELECT id FROM categories WHERE name=?').bind(cols[5]).first();
+      if (cols[catIdx]) {
+        const cat = await c.env.DB.prepare('SELECT id FROM categories WHERE name=?').bind(cols[catIdx]).first();
         if (cat) catId = cat.id;
       }
       items.push({
-        name: cols[0], spec: cols[1]||'', unit: cols[2]||'个',
-        reference_price: parseFloat(cols[3])||0, safety_stock: parseInt(cols[4])||0,
-        category_id: catId, remark: cols[6]||'',
+        name: cols[nameIdx], spec: cols[specIdx]||'', unit: cols[unitIdx]||'个',
+        reference_price: parseFloat(cols[priceIdx])||0,
+        category_id: catId, remark: (remarkIdx >= 0 ? cols[remarkIdx] : '')||'',
       });
     }
     const result = await batchCreateSupplies(c.env.DB, items);
     return c.json({ ok: true, ...result });
-  } catch (e) { return c.json({ ok: false, error: e.message }, 500); }
-});
-// 导出 CSV
-app.get('/api/supplies/export', async (c) => {
-  try {
-    const { keyword, category_id, status } = c.req.query();
-    const csv = '\uFEFF' + await exportSuppliesCsv(c.env.DB, { keyword, category_id, status });
-    c.header('Content-Type', 'text/csv;charset=utf-8');
-    c.header('Content-Disposition', 'attachment; filename="supplies.csv"');
-    return c.body(csv);
   } catch (e) { return c.json({ ok: false, error: e.message }, 500); }
 });
 
@@ -158,6 +184,29 @@ app.get('/api/purchases', async (c) => {
     const r = await listPurchases(c.env.DB, { page: Number(page)||1, limit: Number(limit)||20, date_from, date_to, keyword });
     return c.json({ ok: true, ...r });
   } catch (e) { return c.json({ ok: false, error: e.message }, 500); }
+});
+// 按品名查询所有采购记录（商品查询）— 必须在 :id 路由之前
+app.get('/api/purchases/search-by-supply', async (c) => {
+  try {
+    const name = (c.req.query('name') || '').trim();
+    if (!name) return c.json({ ok: true, items: [] });
+    const rows = await c.env.DB.prepare(`
+      SELECT pi.id, pi.purchase_id, pi.supply_id, pi.quantity, pi.unit_price, pi.subtotal, pi.date,
+             s.name as supply_name, s.spec as supply_spec, s.unit, s.reference_price,
+             p.order_no, p.purchase_date, p.total_amount, p.supplier_name, p.status
+      FROM purchase_items pi
+      JOIN supplies s ON pi.supply_id = s.id
+      JOIN purchases p ON pi.purchase_id = p.id
+      WHERE s.name LIKE ?
+      ORDER BY p.purchase_date DESC, p.id DESC, pi.id
+    `).bind(`%${name}%`).all();
+    return c.json({ ok: true, items: rows.results });
+  } catch (e) { return c.json({ ok: false, error: e.message }, 500); }
+});
+// 未付款采购单列表（请款时选择）— 必须在 :id 路由之前
+app.get('/api/purchases/unpaid', async (c) => {
+  try { return c.json({ ok: true, items: await listUnpaidPurchases(c.env.DB) }); }
+  catch (e) { return c.json({ ok: false, error: e.message }, 500); }
 });
 app.get('/api/purchases/:id', async (c) => {
   try { const p = await getPurchaseDetail(c.env.DB, Number(c.req.param('id'))); if (!p) return c.json({ ok: false, error: '不存在' }, 404);
@@ -213,14 +262,12 @@ td{padding:7px 6px;border-bottom:1px solid #e5e7eb;font-size:13px}
 tr.even td{background:#f8fafc}
 .num{text-align:right;font-family:"Courier New",monospace}
 .total{font-size:18px;font-weight:bold;color:#dc2626;text-align:right;margin-bottom:30px}
-.footer{color:#999;font-size:11px;border-top:1px solid #ddd;padding-top:12px;display:flex;justify-content:space-between}
 @media print{body{padding:20px 30px}th{background:#1e40af!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}}
 </style></head><body>
 <h1>📋 采购单</h1>
 <div class="meta">
   <span><strong>单号：</strong>${p.order_no || ''}</span>
   <span><strong>日期：</strong>${p.purchase_date || ''}</span>
-  <span><strong>状态：</strong>${p.status === 'completed' ? '已完成' : p.status === 'draft' ? '草稿' : p.status || ''}</span>
 </div>
 <table><thead><tr>
   <th style="width:40px">序号</th><th>品名</th><th>规格</th><th style="width:50px">单位</th>
@@ -229,10 +276,6 @@ tr.even td{background:#f8fafc}
 ${items}
 </tbody></table>
 <div class="total">合计：¥${Number(p.total_amount).toFixed(2)}</div>
-<div class="footer">
-  <span>制单日期：${p.purchase_date || ''}</span>
-  <span>采购单号：${p.order_no || ''}</span>
-</div>
 <script>if(new URLSearchParams(location.search).get('print')==='1')setTimeout(()=>window.print(),300)</script>
 </body></html>`;
     return c.html(html);
@@ -296,15 +339,70 @@ app.post('/api/analytics/report-pdf', async (c) => {
   } catch (e) { return c.json({ ok: false, error: e.message }, 500); }
 });
 
-// ============ 健康检查 ============
-app.get('/api/health', (c) => c.json({ ok: true, time: new Date().toISOString() }));
-
-// 系统重置 — 清除所有数据
-app.post('/api/system/reset', async (c) => {
+// ============ 请款单 API ============
+app.get('/api/payment-requests', async (c) => {
   try {
-    return c.json(await resetSystem(c.env.DB));
+    const { page, limit, keyword, status, date_from, date_to } = c.req.query();
+    const r = await listPaymentRequests(c.env.DB, { page: Number(page)||1, limit: Number(limit)||20, keyword, status, date_from, date_to });
+    return c.json({ ok: true, ...r });
   } catch (e) { return c.json({ ok: false, error: e.message }, 500); }
 });
+app.get('/api/payment-requests/:id', async (c) => {
+  try { const p = await getPaymentRequest(c.env.DB, Number(c.req.param('id'))); if (!p) return c.json({ ok: false, error: '不存在' }, 404);
+    return c.json({ ok: true, ...p }); }
+  catch (e) { return c.json({ ok: false, error: e.message }, 500); }
+});
+app.post('/api/payment-requests', async (c) => {
+  try { const b = await c.req.json(); if (!b.request_date) return c.json({ ok: false, error: '申请日期不能为空' }, 400);
+    return c.json(await createPaymentRequest(c.env.DB, b)); }
+  catch (e) { return c.json({ ok: false, error: e.message }, 500); }
+});
+app.put('/api/payment-requests/:id', async (c) => {
+  try { const b = await c.req.json(); return c.json(await updatePaymentRequest(c.env.DB, Number(c.req.param('id')), b)); }
+  catch (e) { return c.json({ ok: false, error: e.message }, 500); }
+});
+app.delete('/api/payment-requests/:id', async (c) => {
+  try { return c.json(await deletePaymentRequest(c.env.DB, Number(c.req.param('id')))); }
+  catch (e) { return c.json({ ok: false, error: e.message }, 500); }
+});
+
+// ============ 系统重置 — 清除所有数据（支持选择性清除）============
+app.post('/api/system/reset', async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    return c.json(await resetSystem(c.env.DB, body));
+  } catch (e) { return c.json({ ok: false, error: e.message }, 500); }
+});
+
+// 备份列表
+app.get('/api/system/backups', async (c) => {
+  try { return c.json({ ok: true, items: await listBackups(c.env.DB) }); }
+  catch (e) { return c.json({ ok: false, error: e.message }, 500); }
+});
+
+// 创建备份
+app.post('/api/system/backups', async (c) => {
+  try {
+    const body = await c.req.json().catch(() => ({}));
+    return c.json(await createBackup(c.env.DB, body));
+  } catch (e) { return c.json({ ok: false, error: e.message }, 500); }
+});
+
+// 恢复备份
+app.post('/api/system/backups/:id/restore', async (c) => {
+  try {
+    return c.json(await restoreBackup(c.env.DB, Number(c.req.param('id'))));
+  } catch (e) { return c.json({ ok: false, error: e.message }, 500); }
+});
+
+// 删除备份
+app.delete('/api/system/backups/:id', async (c) => {
+  try { return c.json(await deleteBackup(c.env.DB, Number(c.req.param('id')))); }
+  catch (e) { return c.json({ ok: false, error: e.message }, 500); }
+});
+
+// ============ 健康检查 ============
+app.get('/api/health', (c) => c.json({ ok: true, time: new Date().toISOString() }));
 
 // ============ SPA 回退 ============
 const SPA_HTML = `<!doctype html>
@@ -312,8 +410,8 @@ const SPA_HTML = `<!doctype html>
   <head><meta charset="UTF-8" /><link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>办公劳保用品管理系统</title>
-    <script type="module" crossorigin src="/assets/index-wIwPeTQ2.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-N3uRaR-f.css">
+    <script type="module" crossorigin src="/assets/index-CJhWbokG.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-pyUjNTPW.css">
   </head>
   <body><div id="root"></div></body>
 </html>`;

@@ -18,6 +18,9 @@ CREATE TABLE IF NOT EXISTS suppliers (
   name TEXT NOT NULL,
   contact TEXT DEFAULT '',
   phone TEXT DEFAULT '',
+  bank_name TEXT DEFAULT '',
+  bank_account TEXT DEFAULT '',
+  is_default INTEGER DEFAULT 0,
   remark TEXT DEFAULT '',
   created_at TEXT DEFAULT (datetime('now', '+8 hours')),
   updated_at TEXT DEFAULT (datetime('now', '+8 hours'))
@@ -46,12 +49,16 @@ CREATE TABLE IF NOT EXISTS purchases (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   order_no TEXT NOT NULL UNIQUE,
   purchase_date TEXT NOT NULL,
-  total_amount REAL NOT NULL DEFAULT 0,
-  status TEXT DEFAULT 'confirmed' CHECK(status IN ('draft','confirmed')),
+  total_amount REAL NOT NULL,
+  status TEXT NOT NULL DEFAULT 'draft',
   remark TEXT DEFAULT '',
-  created_by TEXT DEFAULT '',
-  created_at TEXT DEFAULT (datetime('now', '+8 hours')),
-  updated_at TEXT DEFAULT (datetime('now', '+8 hours'))
+  supplier_id INTEGER,
+  supplier_name TEXT DEFAULT '',
+  payment_status TEXT DEFAULT '未付款',
+  payment_date TEXT DEFAULT '',
+  created_at TEXT DEFAULT (datetime('now','+8 hours')),
+  updated_at TEXT DEFAULT (datetime('now','+8 hours')),
+  FOREIGN KEY (supplier_id) REFERENCES suppliers(id)
 );
 
 -- 采购明细表
@@ -77,6 +84,48 @@ CREATE INDEX IF NOT EXISTS idx_purchases_status ON purchases(status);
 CREATE INDEX IF NOT EXISTS idx_purchase_items_purchase ON purchase_items(purchase_id);
 CREATE INDEX IF NOT EXISTS idx_purchase_items_supply ON purchase_items(supply_id);
 CREATE INDEX IF NOT EXISTS idx_categories_sort ON categories(sort_order);
+
+-- 备份记录表
+CREATE TABLE IF NOT EXISTS backup_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  filename TEXT NOT NULL,
+  description TEXT DEFAULT '',
+  file_size INTEGER DEFAULT 0,
+  data TEXT NOT NULL,
+  created_at TEXT DEFAULT (datetime('now','+8 hours'))
+);
+
+-- 请款单表
+CREATE TABLE IF NOT EXISTS payment_requests (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  request_no TEXT NOT NULL UNIQUE,
+  payment_unit TEXT NOT NULL DEFAULT '',
+  department TEXT DEFAULT '',
+  applicant TEXT DEFAULT '',
+  request_date TEXT NOT NULL,
+  content TEXT DEFAULT '',
+  payee TEXT DEFAULT '',
+  payee_supplier_id INTEGER,
+  bank_name TEXT DEFAULT '',
+  bank_account TEXT DEFAULT '',
+  amount REAL NOT NULL DEFAULT 0,
+  amount_cn TEXT DEFAULT '',
+  payment_method TEXT DEFAULT '转支',
+  remark TEXT DEFAULT '',
+  company_head TEXT DEFAULT '',
+  finance_head TEXT DEFAULT '',
+  dept_head TEXT DEFAULT '',
+  handler TEXT DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft','submitted')),
+  purchase_ids TEXT DEFAULT '',
+  created_at TEXT DEFAULT (datetime('now','+8 hours')),
+  updated_at TEXT DEFAULT (datetime('now','+8 hours'))
+);
+
+-- 供应商表迁移：添加银行字段（兼容已有库）
+ALTER TABLE suppliers ADD COLUMN bank_name TEXT DEFAULT '';
+ALTER TABLE suppliers ADD COLUMN bank_account TEXT DEFAULT '';
+ALTER TABLE suppliers ADD COLUMN is_default INTEGER DEFAULT 0;
 
 -- ============ 默认数据 ============
 INSERT OR IGNORE INTO categories (id, name, sort_order) VALUES
