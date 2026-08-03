@@ -134,3 +134,5 @@ INSERT OR IGNORE INTO categories (id, name, sort_order) VALUES
   (3, '清洁用品', 3),
   (4, '耗材', 4),
   (5, '其他', 5);
+
+-- 食堂管理模块表结构见 canteen-schema.sql（独立迁移，避免重复 ALTER 报错）

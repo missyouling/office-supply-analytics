@@ -16,9 +16,13 @@ import {
 } from './db.js';
 import { generatePurchasePdf, generateReportPdf } from './pdf.js';
 import { getAnalyticsSummary, getCategoryTrend, getFrequency, getTopItems, getPriceAnomaly, getSuggestions, getMonthlyTrend } from './analytics.js';
+import canteen from './canteen-routes.js';
 
 const app = new Hono();
 app.use('*', cors());
+
+// 食堂管理模块（挂载在 /api/canteen 前缀下）
+app.route('/api/canteen', canteen);
 
 // ============ 分类 API ============
 app.get('/api/categories', async (c) => {
