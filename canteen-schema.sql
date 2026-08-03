@@ -133,6 +133,8 @@ CREATE TABLE IF NOT EXISTS canteen_menu_templates (
 -- 食堂表索引
 CREATE INDEX IF NOT EXISTS idx_canteen_supplies_name ON canteen_supplies(name);
 CREATE INDEX IF NOT EXISTS idx_canteen_supplies_category ON canteen_supplies(category_id);
+-- 食材去重唯一索引（同分类下品名唯一，供 INSERT OR IGNORE 使用）
+CREATE UNIQUE INDEX IF NOT EXISTS idx_canteen_supplies_uniq ON canteen_supplies(name, category_id);
 CREATE INDEX IF NOT EXISTS idx_canteen_purchases_date ON canteen_purchases(purchase_date);
 CREATE INDEX IF NOT EXISTS idx_canteen_purchase_items_purchase ON canteen_purchase_items(purchase_id);
 CREATE INDEX IF NOT EXISTS idx_canteen_purchase_items_supply ON canteen_purchase_items(supply_id);
@@ -157,3 +159,5 @@ INSERT OR IGNORE INTO canteen_expense_categories (id, name, sort_order) VALUES
   (4, '人工费', 4),
   (5, '设备维护费', 5),
   (6, '其他', 6);
+
+-- 食堂常用食材默认数据见 canteen-seed.sql（INSERT OR IGNORE，依赖 name+category 唯一索引去重）
