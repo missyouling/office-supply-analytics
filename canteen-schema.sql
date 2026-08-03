@@ -130,6 +130,28 @@ CREATE TABLE IF NOT EXISTS canteen_menu_templates (
   updated_at TEXT DEFAULT (datetime('now', '+8 hours'))
 );
 
+-- 饭卡充值记录表（CSV 导入，external_sn 卡流水号唯一去重）
+CREATE TABLE IF NOT EXISTS canteen_card_recharges (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  external_sn TEXT UNIQUE,
+  card_no TEXT DEFAULT '',
+  user_id TEXT DEFAULT '',
+  user_name TEXT NOT NULL DEFAULT '',
+  department_code TEXT DEFAULT '',
+  user_department TEXT DEFAULT '',
+  recharge_date TEXT DEFAULT '',
+  amount REAL DEFAULT 0,
+  balance_recorded REAL,
+  payment_method TEXT DEFAULT '现金',
+  operator TEXT DEFAULT '导入',
+  machine_no TEXT DEFAULT '',
+  bill_no TEXT DEFAULT '',
+  remark TEXT DEFAULT '',
+  created_at TEXT DEFAULT (datetime('now', '+8 hours')),
+  updated_at TEXT DEFAULT (datetime('now', '+8 hours'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_canteen_recharges_sn ON canteen_card_recharges(external_sn);
+
 -- 食堂表索引
 CREATE INDEX IF NOT EXISTS idx_canteen_supplies_name ON canteen_supplies(name);
 CREATE INDEX IF NOT EXISTS idx_canteen_supplies_category ON canteen_supplies(category_id);

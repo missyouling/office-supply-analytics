@@ -508,3 +508,115 @@ export async function exportCanteenPurchasesCsv(db, { date_from, date_to } = {})
   }
   return lines.join('\n');
 }
+
+// =============================================
+// 饭卡充值（CSV 导入）
+// =============================================
+
+// 列表
+export async function listCanteenRecharges(db, { month, year, keyword, page = 1, limit = 20 } = {}) {
+  const where = []; const params = [];
+  if (month) { where.push("substr(recharge_date,1,7)=?"); params.push(month); }
+  if (year) { where.push("substr(recharge_date,1,4)=?"); params.push(String(year)); }
+  if (keyword) { where.push('(user_name LIKE ? OR user_id LIKE ? OR card_no LIKE ? OR external_sn LIKE ?)'); params.push(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`, `%${keyword}%`); }
+  const w = where.length ? 'WHERE ' + where.join(' AND ') : '';
+  const total = (await db.prepare(`SELECT COUNT(*) as c FROM canteen_card_recharges ${w}`).bind(...params).first()).c;
+  const items = (await db.prepare(`SELECT * FROM canteen_card_recharges ${w} ORDER BY recharge_date DESC, id DESC LIMIT ? OFFSET ?`).bind(...params, limit, (page - 1) * limit).all()).results;
+  return { items, total, page, limit };
+}
+
+export async function deleteCanteenRecharge(db, id) {
+  await db.prepare('DELETE FROM canteen_card_recharges WHERE id=?').bind(id).run();
+  return { ok: true };
+}
+
+// 月度汇总
+export async function summaryCanteenRecharges(db, month) {
+  const m = month || new Date().toISOString().slice(0, 7);
+  const row = (await db.prepare(`
+    SELECT IFNULL(SUM(amount),0) as total, COUNT(*) as count, COUNT(DISTINCT user_name) as people
+    FROM canteen_card_recharges WHERE substr(recharge_date,1,7)=?`).bind(m).first());
+  return { month: m, total: row.total || 0, count: row.count || 0, people: row.people || 0 };
+}
+
+// CSV 导入（支持 upsert / skip 模式，mapping 为列映射 JSON）
+export async function importCanteenRecharges(db, { rows, mode = 'upsert', mapping = {} } = {}) {
+  const result = { total: 0, inserted: 0, updated: 0, skipped: 0, errors: [] };
+  if (!Array.isArray(rows)) return result;
+  result.total = rows.length;
+
+  // 映射：系统字段 -> CSV 列名；rows 已按 sysKey 归一（行构造时 row[sysKey]=cols[idx]）
+  const f = (row, key, fallback = '') => {
+    const v = row[key];
+    return v === undefined || v === null ? fallback : String(v).trim();
+  };
+  const cleanMoney = (v) => {
+    const n = parseFloat(String(v || '').replace(/[￥¥,\s]/g, ''));
+    return isNaN(n) ? null : n;
+  };
+  const cleanDate = (v) => {
+    // 取日期部分（支持 YYYY-MM-DD HH:mm:ss 或 YYYY/MM/DD）
+    const s = String(v || '').trim();
+    const m = s.match(/(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
+    if (!m) return '';
+    return `${m[1]}-${String(m[2]).padStart(2, '0')}-${String(m[3]).padStart(2, '0')}`;
+  };
+
+  const stmtInsert = db.prepare(`INSERT INTO canteen_card_recharges
+    (external_sn, card_no, user_id, user_name, department_code, user_department, recharge_date, amount, balance_recorded, payment_method, operator, machine_no, bill_no, remark)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+  const stmtUpdate = db.prepare(`UPDATE canteen_card_recharges SET
+    card_no=?, user_id=?, user_name=?, department_code=?, user_department=?, recharge_date=?, amount=?, balance_recorded=?, payment_method=?, operator=?, machine_no=?, bill_no=?, remark=?, updated_at=datetime('now','+8 hours')
+    WHERE external_sn=?`);
+
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    const external_sn = f(row, 'external_sn');
+    const user_name = f(row, 'user_name');
+    const recharge_date = cleanDate(f(row, 'recharge_date'));
+    const amount = cleanMoney(f(row, 'amount'));
+
+    // 校验必填
+    const missing = [];
+    if (!external_sn) missing.push('外部编号缺失');
+    if (!user_name) missing.push('姓名缺失');
+    if (!recharge_date) missing.push('日期缺失');
+    if (amount === null) missing.push('金额格式错误');
+    if (missing.length) {
+      result.errors.push({ row: i + 2, reason: missing.join('、') });
+      continue;
+    }
+
+    const rec = {
+      card_no: f(row, 'card_no'),
+      user_id: f(row, 'user_id'),
+      department_code: f(row, 'department_code'),
+      user_department: f(row, 'user_department'),
+      payment_method: f(row, 'payment_method', '现金') || '现金',
+      operator: f(row, 'operator', '导入') || '导入',
+      machine_no: f(row, 'machine_no'),
+      bill_no: f(row, 'bill_no'),
+      remark: f(row, 'remark'),
+      balance_recorded: cleanMoney(f(row, 'balance_recorded')),
+    };
+
+    const existing = await db.prepare('SELECT id FROM canteen_card_recharges WHERE external_sn=?').bind(external_sn).first();
+    if (existing) {
+      if (mode === 'skip') { result.skipped++; continue; }
+      await stmtUpdate.bind(
+        rec.card_no, rec.user_id, user_name, rec.department_code, rec.user_department,
+        recharge_date, amount, rec.balance_recorded, rec.payment_method, rec.operator,
+        rec.machine_no, rec.bill_no, rec.remark, external_sn,
+      ).run();
+      result.updated++;
+    } else {
+      await stmtInsert.bind(
+        external_sn, rec.card_no, rec.user_id, user_name, rec.department_code, rec.user_department,
+        recharge_date, amount, rec.balance_recorded, rec.payment_method, rec.operator,
+        rec.machine_no, rec.bill_no, rec.remark,
+      ).run();
+      result.inserted++;
+    }
+  }
+  return result;
+}

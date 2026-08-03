@@ -15,6 +15,7 @@ import {
   listCanteenMenuTemplates, createCanteenMenuTemplate, deleteCanteenMenuTemplate,
   canteenMonthlySummary, canteenDailyTrend, canteenExpenseBreakdown, canteenFoodCategoryShare,
   canteenTopSupplies, canteenMonthlyCompare, canteenSuggestions, exportCanteenPurchasesCsv,
+  listCanteenRecharges, deleteCanteenRecharge, summaryCanteenRecharges, importCanteenRecharges,
 } from './canteen-db.js';
 
 const canteen = new Hono();
@@ -246,6 +247,98 @@ canteen.get('/analytics/monthly-compare', async (c) => {
 });
 canteen.get('/analytics/suggestions', async (c) => {
   try { return c.json(ok({ items: await canteenSuggestions(c.env.DB, c.req.query('month')) })); } catch (e) { return fail(c, e); }
+});
+
+// ============ 饭卡充值 ============
+canteen.get('/recharges', async (c) => {
+  try {
+    const { month, year, keyword, page, limit } = c.req.query();
+    const r = await listCanteenRecharges(c.env.DB, { month, year, keyword, page: Number(page) || 1, limit: Number(limit) || 20 });
+    return c.json(ok(r));
+  } catch (e) { return fail(c, e); }
+});
+canteen.get('/recharges/summary', async (c) => {
+  try { return c.json(ok(await summaryCanteenRecharges(c.env.DB, c.req.query('month')))); } catch (e) { return fail(c, e); }
+});
+canteen.delete('/recharges/:id', async (c) => {
+  try { await deleteCanteenRecharge(c.env.DB, Number(c.req.param('id'))); return c.json(ok({})); } catch (e) { return fail(c, e); }
+});
+// CSV 导入：POST /api/canteen/recharges/import  (multipart: file + mode + mapping JSON)
+canteen.post('/recharges/import', async (c) => {
+  try {
+    const form = await c.req.parseBody();
+    const file = form['file'];
+    if (!file || typeof file === 'string' || !file.arrayBuffer) return c.json({ ok: false, error: '缺少 CSV 文件' }, 400);
+    const mode = String(form['mode'] || 'upsert');
+    let mapping = {};
+    try { mapping = JSON.parse(String(form['mapping'] || '{}')); } catch { mapping = {}; }
+
+    const buf = await file.arrayBuffer();
+    let text = '';
+    try { text = new TextDecoder('utf-8', { fatal: true }).decode(buf); }
+    catch { try { text = new TextDecoder('gbk').decode(buf); } catch { text = new TextDecoder('utf-8', { fatal: false }).decode(buf); } }
+    if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+
+    // 解析 CSV（支持双引号）
+    const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
+    if (lines.length < 2) return c.json({ ok: false, error: 'CSV 数据不足' }, 400);
+    const parseLine = (line) => {
+      const out = []; let cur = ''; let inQ = false;
+      for (let i = 0; i < line.length; i++) {
+        const ch = line[i];
+        if (ch === '"') { if (inQ && line[i + 1] === '"') { cur += '"'; i++; } else inQ = !inQ; }
+        else if (ch === ',' && !inQ) { out.push(cur); cur = ''; }
+        else cur += ch;
+      }
+      out.push(cur);
+      return out.map((s) => s.trim().replace(/^"|"$/g, ''));
+    };
+    const header = parseLine(lines[0]);
+    // 若 mapping 为空则按列名智能匹配
+    const norm = (h) => h.replace(/[|｜]/g, '').replace(/\s+/g, '').toLowerCase();
+    const headerNorm = header.map(norm);
+    const autoMap = (targets) => {
+      for (const t of targets) {
+        const idx = headerNorm.findIndex((h) => h.includes(t));
+        if (idx >= 0) return header[idx];
+      }
+      return '';
+    };
+    if (!mapping.external_sn) mapping.external_sn = autoMap(['卡流水号', '流水号', 'externalsn']);
+    if (!mapping.user_name) mapping.user_name = autoMap(['姓名', '用户名', 'username']);
+    if (!mapping.user_id) mapping.user_id = autoMap(['工号', 'userid', '员工编号']);
+    if (!mapping.card_no) mapping.card_no = autoMap(['卡号', 'cardno']);
+    if (!mapping.department_code) mapping.department_code = autoMap(['部门编号', 'departmentcode']);
+    if (!mapping.user_department) mapping.user_department = autoMap(['部门名称', '部门', 'department']);
+    if (!mapping.recharge_date) mapping.recharge_date = autoMap(['充值时间', '充值日期', '时间', 'rechargedate']);
+    if (!mapping.amount) mapping.amount = autoMap(['充值金额', '金额', 'amount']);
+    if (!mapping.balance_recorded) mapping.balance_recorded = autoMap(['卡余额', '余额', 'balance']);
+    if (!mapping.payment_method) mapping.payment_method = autoMap(['类型', '支付方式', 'paymentmethod']);
+    if (!mapping.operator) mapping.operator = autoMap(['操作员', 'operator']);
+    if (!mapping.machine_no) mapping.machine_no = autoMap(['机号', 'machineno']);
+    if (!mapping.bill_no) mapping.bill_no = autoMap(['账单号', 'billno']);
+
+    // 必填映射检查
+    const required = ['external_sn', 'user_name', 'recharge_date', 'amount'];
+    const missingCols = required.filter((k) => !mapping[k]);
+    if (missingCols.length) return c.json({ ok: false, error: `缺少必填列映射：${missingCols.join(', ')}`, debug: { header, mapping } }, 400);
+
+    // 构造行对象
+    const rows = [];
+    for (let i = 1; i < lines.length; i++) {
+      const cols = parseLine(lines[i]);
+      if (/汇总|合计|总计|小计/.test(cols[0] || '')) continue;
+      const row = {};
+      for (const [sysKey, colName] of Object.entries(mapping)) {
+        if (!colName) continue;
+        const idx = header.findIndex((h) => h === colName);
+        if (idx >= 0) row[sysKey] = cols[idx] || '';
+      }
+      rows.push(row);
+    }
+    const result = await importCanteenRecharges(c.env.DB, { rows, mode, mapping });
+    return c.json({ ok: true, data: result });
+  } catch (e) { return fail(c, e); }
 });
 
 export default canteen;
