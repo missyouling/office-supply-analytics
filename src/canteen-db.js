@@ -192,8 +192,8 @@ export async function getCanteenDailyIncome(db, id) {
   return await db.prepare('SELECT * FROM canteen_daily_income WHERE id=?').bind(id).first();
 }
 export async function saveCanteenDailyIncome(db, data) {
-  // 自动计算：总人次 = 早+中+晚，总收入 = 早+中+晚金额
-  const total_count = (data.breakfast_count || 0) + (data.lunch_count || 0) + (data.dinner_count || 0);
+  // 自动计算：总人次 = 午餐+晚餐（早餐不计人次），总收入 = 早+中+晚金额
+  const total_count = (data.lunch_count || 0) + (data.dinner_count || 0);
   const total_amount = (data.breakfast_amount || 0) + (data.lunch_amount || 0) + (data.dinner_amount || 0);
   const existing = await db.prepare('SELECT id FROM canteen_daily_income WHERE income_date=?').bind(data.income_date).first();
   if (existing) {
@@ -314,9 +314,9 @@ export async function deleteCanteenMenuTemplate(db, id) {
 // 月度收支总览
 export async function canteenMonthlySummary(db, month) {
   const m = month || new Date().toISOString().slice(0, 7);
-  // 收入
+  // 收入（人次口径：午餐+晚餐，早餐不计人次）
   const income = (await db.prepare(`
-    SELECT IFNULL(SUM(total_amount),0) as amount, IFNULL(SUM(total_count),0) as count,
+    SELECT IFNULL(SUM(total_amount),0) as amount, IFNULL(SUM(lunch_count + dinner_count),0) as count,
            IFNULL(SUM(breakfast_amount),0) as breakfast, IFNULL(SUM(lunch_amount),0) as lunch, IFNULL(SUM(dinner_amount),0) as dinner
     FROM canteen_daily_income WHERE substr(income_date,1,7)=?`).bind(m).first());
   // 食材采购支出
@@ -339,32 +339,35 @@ export async function canteenMonthlySummary(db, month) {
 }
 
 // 每日收支趋势（月度）
+// 其他费用（水电气、人工费）按录入月份分摊到当月每一天：share = 当月其他费用总额 / 当月天数
 export async function canteenDailyTrend(db, month) {
   const m = month || new Date().toISOString().slice(0, 7);
   const income = (await db.prepare(`
-    SELECT income_date as date, total_amount, total_count, breakfast_amount, lunch_amount, dinner_amount
+    SELECT income_date as date, total_amount, total_count, breakfast_amount, lunch_amount, dinner_amount, lunch_count, dinner_count
     FROM canteen_daily_income WHERE substr(income_date,1,7)=? ORDER BY income_date`).bind(m).all()).results;
   const expense = (await db.prepare(`
     SELECT purchase_date as date, SUM(total_amount) as amount FROM canteen_purchases
     WHERE substr(purchase_date,1,7)=? GROUP BY purchase_date ORDER BY purchase_date`).bind(m).all()).results;
-  const other = (await db.prepare(`
-    SELECT expense_date as date, SUM(amount) as amount FROM canteen_other_expenses
-    WHERE substr(expense_date,1,7)=? GROUP BY expense_date ORDER BY expense_date`).bind(m).all()).results;
+  // 当月其他费用总额（不按天归集）
+  const otherRow = (await db.prepare(`
+    SELECT IFNULL(SUM(amount),0) as amount FROM canteen_other_expenses WHERE substr(expense_date,1,7)=?`).bind(m).first());
+  // 当月天数
+  const [y, mo] = m.split('-').map(Number);
+  const daysInMonth = new Date(y, mo, 0).getDate();
+  const share = daysInMonth > 0 ? Math.round(((otherRow.amount || 0) / daysInMonth) * 100) / 100 : 0;
   // 合并成按日数组
   const map = {};
   for (const r of income) {
-    map[r.date] = { date: r.date, income: r.total_amount || 0, count: r.total_count || 0, breakfast: r.breakfast_amount || 0, lunch: r.lunch_amount || 0, dinner: r.dinner_amount || 0, expense: 0, profit: (r.total_amount || 0) };
+    // 人次口径：午餐+晚餐（早餐不计人次，兼容历史 total_count 旧口径）
+    const cnt = (r.lunch_count || 0) + (r.dinner_count || 0);
+    map[r.date] = { date: r.date, income: r.total_amount || 0, count: cnt, breakfast: r.breakfast_amount || 0, lunch: r.lunch_amount || 0, dinner: r.dinner_amount || 0, expense: 0, share_expense: share, profit: (r.total_amount || 0) - share };
   }
   for (const r of expense) {
-    if (!map[r.date]) map[r.date] = { date: r.date, income: 0, count: 0, breakfast: 0, lunch: 0, dinner: 0, expense: 0, profit: 0 };
+    if (!map[r.date]) map[r.date] = { date: r.date, income: 0, count: 0, breakfast: 0, lunch: 0, dinner: 0, expense: 0, share_expense: share, profit: 0 - share };
     map[r.date].expense += r.amount || 0;
-    map[r.date].profit = (map[r.date].income || 0) - map[r.date].expense;
+    map[r.date].profit = (map[r.date].income || 0) - map[r.date].expense - share;
   }
-  for (const r of other) {
-    if (!map[r.date]) map[r.date] = { date: r.date, income: 0, count: 0, breakfast: 0, lunch: 0, dinner: 0, expense: 0, profit: 0 };
-    map[r.date].expense += r.amount || 0;
-    map[r.date].profit = (map[r.date].income || 0) - map[r.date].expense;
-  }
+  // 若某天只有分摊支出（无采购无收入），也保留（分摊到全月每一天）
   return Object.values(map).sort((a, b) => a.date < b.date ? -1 : 1);
 }
 
@@ -412,22 +415,23 @@ export async function canteenMonthlyCompare(db, { from, to, year } = {}) {
     where = "WHERE substr(income_date,1,7)>=? AND substr(income_date,1,7)<=?";
     params.push(from, to);
   }
-  // 收入按月
+  // 收入按月（人次口径：午餐+晚餐）
   const incomeRows = (await db.prepare(`
-    SELECT substr(income_date,1,7) as month, SUM(total_amount) as income, SUM(total_count) as count
+    SELECT substr(income_date,1,7) as month, SUM(total_amount) as income, SUM(lunch_count + dinner_count) as count
     FROM canteen_daily_income ${where} GROUP BY substr(income_date,1,7) ORDER BY month`).bind(...params).all()).results;
-  // 采购按月
+  // 采购按月（注意：where 含多个 income_date 占位，需全局替换为对应表列名）
+  const replaceCol = (w, col) => w.replaceAll('income_date', col);
   const foodRows = (await db.prepare(`
     SELECT substr(purchase_date,1,7) as month, SUM(total_amount) as food
-    FROM canteen_purchases ${where.replace('income_date', 'purchase_date')} GROUP BY substr(purchase_date,1,7) ORDER BY month`).bind(...params).all()).results;
+    FROM canteen_purchases ${replaceCol(where, 'purchase_date')} GROUP BY substr(purchase_date,1,7) ORDER BY month`).bind(...params).all()).results;
   // 其他费用按月
   const otherRows = (await db.prepare(`
     SELECT substr(expense_date,1,7) as month, SUM(amount) as other
-    FROM canteen_other_expenses ${where.replace('income_date', 'expense_date')} GROUP BY substr(expense_date,1,7) ORDER BY month`).bind(...params).all()).results;
+    FROM canteen_other_expenses ${replaceCol(where, 'expense_date')} GROUP BY substr(expense_date,1,7) ORDER BY month`).bind(...params).all()).results;
   // 资源占用费按月
   const resourceRows = (await db.prepare(`
     SELECT substr(fee_date,1,7) as month, SUM(amount) as resource
-    FROM canteen_resource_fees ${where.replace('income_date', 'fee_date')} GROUP BY substr(fee_date,1,7) ORDER BY month`).bind(...params).all()).results;
+    FROM canteen_resource_fees ${replaceCol(where, 'fee_date')} GROUP BY substr(fee_date,1,7) ORDER BY month`).bind(...params).all()).results;
 
   const map = {};
   for (const r of incomeRows) {
