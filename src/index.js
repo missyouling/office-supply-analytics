@@ -413,9 +413,9 @@ const SPA_HTML = `<!doctype html>
 <html lang="zh-CN">
   <head><meta charset="UTF-8" /><link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>办公劳保用品管理系统</title>
-    <script type="module" crossorigin src="/assets/index-CJhWbokG.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-pyUjNTPW.css">
+    <title>综合管理平台</title>
+    <script type="module" crossorigin src="/assets/index-_u36I2Ke.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-CYWXkSCO.css">
   </head>
   <body><div id="root"></div></body>
 </html>`;
