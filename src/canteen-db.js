@@ -483,7 +483,18 @@ export async function canteenMonthlyCompare(db, { from, to, year } = {}) {
     if (!map[r.month]) map[r.month] = { month: r.month, income: 0, food: 0, other: 0, resource: 0, count: 0 };
     map[r.month].resource = r.resource || 0;
   }
-  return Object.values(map).sort((a, b) => a.month < b.month ? -1 : 1);
+  const months = Object.values(map).sort((a, b) => a.month < b.month ? -1 : 1);
+  // 人均成本：与「每日盈亏明细」口径一致 = 每日人均成本（(采购+分摊-早餐-资源费)/当日人次）的平均
+  // 复用 canteenDailyTrend 逐月计算，保证半年度/年度与月度数值完全一致
+  for (const m of months) {
+    const trend = await canteenDailyTrend(db, m.month);
+    const days = trend.filter((d) => (d.count || 0) > 0);
+    if (days.length) {
+      const perDay = days.map((d) => (d.expense + d.share_expense - (d.breakfast || 0) - (d.resource || 0)) / d.count);
+      m.perCapita = Math.round((perDay.reduce((a, b) => a + b, 0) / perDay.length) * 100) / 100;
+    } else { m.perCapita = 0; }
+  }
+  return months;
 }
 
 // 自动优化建议

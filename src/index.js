@@ -24,6 +24,22 @@ app.use('*', cors());
 // 食堂管理模块（挂载在 /api/canteen 前缀下）
 app.route('/api/canteen', canteen);
 
+// ============ 基础密码认证 ============
+// 启用方式：Worker 环境变量 PASS（未设置则默认 2153）
+// GET /api/auth/config  -> 是否启用认证（供前端决定是否展示登录页）
+app.get('/api/auth/config', async (c) => {
+  const enabled = c.env.PASS !== undefined && c.env.PASS !== '' ? true : true; // 默认始终启用
+  return c.json({ ok: true, enabled });
+});
+// POST /api/auth/verify { password } -> 服务端比对，避免密码写死在前端
+app.post('/api/auth/verify', async (c) => {
+  try {
+    const b = await c.req.json();
+    const pass = c.env.PASS || '2153';
+    return c.json({ ok: true, success: String(b.password || '') === pass });
+  } catch (e) { return c.json({ ok: false, error: e.message }, 500); }
+});
+
 // ============ 分类 API ============
 app.get('/api/categories', async (c) => {
   try { return c.json({ ok: true, items: await listCategories(c.env.DB) }); }
@@ -414,8 +430,8 @@ const SPA_HTML = `<!doctype html>
   <head><meta charset="UTF-8" /><link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>综合管理平台</title>
-    <script type="module" crossorigin src="/assets/index-BhBBrAS_.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-Dn46icR7.css">
+    <script type="module" crossorigin src="/assets/index-2P3Af7aP.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-BbyKeXRv.css">
   </head>
   <body><div id="root"></div></body>
 </html>`;
