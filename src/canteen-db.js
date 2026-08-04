@@ -369,6 +369,10 @@ export async function canteenDailyTrend(db, month) {
   const expense = (await db.prepare(`
     SELECT purchase_date as date, SUM(total_amount) as amount FROM canteen_purchases
     WHERE substr(purchase_date,1,7)=? GROUP BY purchase_date ORDER BY purchase_date`).bind(m).all()).results;
+  // 资源占用费收入（按日）
+  const resource = (await db.prepare(`
+    SELECT fee_date as date, SUM(amount) as amount FROM canteen_resource_fees
+    WHERE substr(fee_date,1,7)=? GROUP BY fee_date ORDER BY fee_date`).bind(m).all()).results;
   // 当月其他费用总额（优先实际金额，无实际金额时用估算金额；不按天归集）
   const otherRow = (await db.prepare(`
     SELECT IFNULL(SUM(CASE WHEN actual_amount > 0 THEN actual_amount ELSE amount END),0) as amount FROM canteen_other_expenses WHERE substr(expense_date,1,7)=?`).bind(m).first());
@@ -381,12 +385,19 @@ export async function canteenDailyTrend(db, month) {
   for (const r of income) {
     // 人次口径：午餐+晚餐（早餐不计人次，兼容历史 total_count 旧口径）
     const cnt = (r.lunch_count || 0) + (r.dinner_count || 0);
-    map[r.date] = { date: r.date, income: r.total_amount || 0, count: cnt, breakfast: r.breakfast_amount || 0, lunch: r.lunch_amount || 0, dinner: r.dinner_amount || 0, expense: 0, share_expense: share, profit: (r.total_amount || 0) - share };
+    // 收入 = 消费收入(total_amount，含早) + 资源占用费(另加) ；其中早餐收入=breakfast_amount
+    map[r.date] = { date: r.date, income: r.total_amount || 0, count: cnt, breakfast: r.breakfast_amount || 0, lunch: r.lunch_amount || 0, dinner: r.dinner_amount || 0, resource: 0, expense: 0, share_expense: share, profit: (r.total_amount || 0) - share };
   }
   for (const r of expense) {
-    if (!map[r.date]) map[r.date] = { date: r.date, income: 0, count: 0, breakfast: 0, lunch: 0, dinner: 0, expense: 0, share_expense: share, profit: 0 - share };
+    if (!map[r.date]) map[r.date] = { date: r.date, income: 0, count: 0, breakfast: 0, lunch: 0, dinner: 0, resource: 0, expense: 0, share_expense: share, profit: 0 - share };
     map[r.date].expense += r.amount || 0;
     map[r.date].profit = (map[r.date].income || 0) - map[r.date].expense - share;
+  }
+  for (const r of resource) {
+    if (!map[r.date]) map[r.date] = { date: r.date, income: 0, count: 0, breakfast: 0, lunch: 0, dinner: 0, resource: 0, expense: 0, share_expense: share, profit: 0 - share };
+    map[r.date].resource += r.amount || 0;
+    map[r.date].income = (map[r.date].income || 0) + (r.amount || 0);
+    map[r.date].profit = (map[r.date].income || 0) - (map[r.date].expense || 0) - share;
   }
   // 若某天只有分摊支出（无采购无收入），也保留（分摊到全月每一天）
   return Object.values(map).sort((a, b) => a.date < b.date ? -1 : 1);
