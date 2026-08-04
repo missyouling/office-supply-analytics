@@ -427,7 +427,7 @@ export async function canteenFoodCategoryShare(db, month) {
     GROUP BY c.name ORDER BY amount DESC`).bind(m).all()).results;
   return rows;
 }
-export async function canteenTopSupplies(db, month, limit = 5) {
+export async function canteenTopSupplies(db, month, limit = 10) {
   const m = month || new Date().toISOString().slice(0, 7);
   return (await db.prepare(`
     SELECT s.name, s.unit, IFNULL(SUM(pi.quantity),0) as quantity, IFNULL(SUM(pi.subtotal),0) as amount
@@ -435,7 +435,7 @@ export async function canteenTopSupplies(db, month, limit = 5) {
     LEFT JOIN canteen_supplies s ON pi.supply_id = s.id
     LEFT JOIN canteen_purchases p ON pi.purchase_id = p.id
     WHERE substr(p.purchase_date,1,7)=?
-    GROUP BY s.id ORDER BY quantity DESC LIMIT ?`).bind(m, limit).all()).results;
+    GROUP BY s.id ORDER BY amount DESC LIMIT ?`).bind(m, limit).all()).results;
 }
 
 // 月度对比（半年度/年度）

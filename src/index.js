@@ -414,8 +414,8 @@ const SPA_HTML = `<!doctype html>
   <head><meta charset="UTF-8" /><link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>综合管理平台</title>
-    <script type="module" crossorigin src="/assets/index-DsLGBT16.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-DxZ6J0xs.css">
+    <script type="module" crossorigin src="/assets/index-CAI1mIqJ.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-DhN9onhp.css">
   </head>
   <body><div id="root"></div></body>
 </html>`;

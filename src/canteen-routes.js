@@ -240,7 +240,7 @@ canteen.get('/analytics/food-share', async (c) => {
 });
 canteen.get('/analytics/top-supplies', async (c) => {
   try {
-    const limit = Number(c.req.query('limit')) || 5;
+    const limit = Number(c.req.query('limit')) || 10;
     return c.json(ok({ items: await canteenTopSupplies(c.env.DB, c.req.query('month'), limit) }));
   } catch (e) { return fail(c, e); }
 });
