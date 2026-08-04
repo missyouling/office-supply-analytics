@@ -8,7 +8,7 @@ import {
   listCanteenSupplies, listCanteenSuppliesAll, createCanteenSupply, updateCanteenSupply, deleteCanteenSupply,
   listCanteenExpenseCategories, createCanteenExpenseCategory, updateCanteenExpenseCategory, deleteCanteenExpenseCategory,
   listCanteenPurchases, getCanteenPurchaseDetail, createCanteenPurchase, updateCanteenPurchase, deleteCanteenPurchase,
-  listCanteenOtherExpenses, createCanteenOtherExpense, updateCanteenOtherExpense, deleteCanteenOtherExpense,
+  listCanteenOtherExpenses, createCanteenOtherExpense, updateCanteenOtherExpense, deleteCanteenOtherExpense, upsertCanteenOtherExpenses,
   listCanteenDailyIncome, getCanteenDailyIncome, saveCanteenDailyIncome, deleteCanteenDailyIncome,
   listCanteenResourceFees, createCanteenResourceFee, updateCanteenResourceFee, deleteCanteenResourceFee, summaryCanteenResourceFees,
   getCanteenWeeklyMenu, saveCanteenWeeklyMenu, copyCanteenWeeklyMenu,
@@ -127,6 +127,11 @@ canteen.get('/expenses', async (c) => {
 canteen.post('/expenses', async (c) => {
   try { const b = await c.req.json(); if (!b.expense_date || !b.category) return c.json({ ok: false, error: '日期和科目不能为空' }, 400);
     return c.json(ok(await createCanteenOtherExpense(c.env.DB, b))); } catch (e) { return fail(c, e); }
+});
+// 按（月份 + 科目）批量 upsert：{ month: 'YYYY-MM', items: [{ category, amount, remark }] }
+canteen.post('/expenses/upsert', async (c) => {
+  try { const b = await c.req.json(); if (!b.month || !Array.isArray(b.items)) return c.json({ ok: false, error: '参数错误' }, 400);
+    return c.json(ok(await upsertCanteenOtherExpenses(c.env.DB, b))); } catch (e) { return fail(c, e); }
 });
 canteen.put('/expenses/:id', async (c) => {
   try { const b = await c.req.json();

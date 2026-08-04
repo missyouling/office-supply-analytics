@@ -177,6 +177,27 @@ export async function deleteCanteenOtherExpense(db, id) {
   return { ok: true };
 }
 
+// 按（月份 + 科目）整体 upsert，返回各项差额
+export async function upsertCanteenOtherExpenses(db, { month, items = [] } = {}) {
+  const date = `${month}-01`;
+  let updated = 0, inserted = 0;
+  for (const it of items) {
+    if (!it.category) continue;
+    const existing = await db.prepare("SELECT id FROM canteen_other_expenses WHERE substr(expense_date,1,7)=? AND category=?")
+      .bind(month, it.category).first();
+    if (existing) {
+      await db.prepare("UPDATE canteen_other_expenses SET amount=?, remark=?, updated_at=datetime('now','+8 hours') WHERE id=?")
+        .bind(Number(it.amount) || 0, it.remark || '', existing.id).run();
+      updated++;
+    } else {
+      await db.prepare('INSERT INTO canteen_other_expenses (expense_date, category, amount, remark) VALUES (?,?,?,?)')
+        .bind(date, it.category, Number(it.amount) || 0, it.remark || '').run();
+      inserted++;
+    }
+  }
+  return { ok: true, updated, inserted };
+}
+
 // ------ 每日收入 ------
 export async function listCanteenDailyIncome(db, { month, date_from, date_to, page = 1, limit = 100 } = {}) {
   const where = []; const params = [];
