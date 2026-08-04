@@ -206,7 +206,7 @@ export async function listCanteenDailyIncome(db, { month, date_from, date_to, pa
   if (date_to) { where.push('income_date<=?'); params.push(date_to); }
   const w = where.length ? 'WHERE ' + where.join(' AND ') : '';
   const total = (await db.prepare(`SELECT COUNT(*) as c FROM canteen_daily_income ${w}`).bind(...params).first()).c;
-  const items = (await db.prepare(`SELECT * FROM canteen_daily_income ${w} ORDER BY income_date DESC LIMIT ? OFFSET ?`).bind(...params, limit, (page - 1) * limit).all()).results;
+  const items = (await db.prepare(`SELECT * FROM canteen_daily_income ${w} ORDER BY income_date ASC LIMIT ? OFFSET ?`).bind(...params, limit, (page - 1) * limit).all()).results;
   return { items, total, page, limit };
 }
 export async function getCanteenDailyIncome(db, id) {
