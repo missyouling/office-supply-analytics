@@ -66,12 +66,14 @@ CREATE TABLE IF NOT EXISTS canteen_purchase_items (
   FOREIGN KEY (supply_id) REFERENCES canteen_supplies(id) ON DELETE RESTRICT
 );
 
--- 其他费用表（水电气、人工费，按月）
+-- 其他费用表（水电气、工资、设备维护费，按月；amount=估算金额，actual_amount=实际金额）
 CREATE TABLE IF NOT EXISTS canteen_other_expenses (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   expense_date TEXT NOT NULL,
   category TEXT NOT NULL,
   amount REAL NOT NULL DEFAULT 0,
+  actual_amount REAL NOT NULL DEFAULT 0,
+  params TEXT DEFAULT '',
   remark TEXT DEFAULT '',
   created_at TEXT DEFAULT (datetime('now', '+8 hours')),
   updated_at TEXT DEFAULT (datetime('now', '+8 hours'))
@@ -178,7 +180,7 @@ INSERT OR IGNORE INTO canteen_expense_categories (id, name, sort_order) VALUES
   (1, '水费', 1),
   (2, '电费', 2),
   (3, '燃气费', 3),
-  (4, '人工费', 4),
+  (4, '工资', 4),
   (5, '设备维护费', 5),
   (6, '其他', 6);
 

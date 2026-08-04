@@ -162,14 +162,14 @@ export async function listCanteenOtherExpenses(db, { month, year, category, page
   const items = (await db.prepare(`SELECT * FROM canteen_other_expenses ${w} ORDER BY expense_date DESC, id DESC LIMIT ? OFFSET ?`).bind(...params, limit, (page - 1) * limit).all()).results;
   return { items, total, page, limit };
 }
-export async function createCanteenOtherExpense(db, { expense_date, category, amount, remark }) {
-  const r = await db.prepare('INSERT INTO canteen_other_expenses (expense_date, category, amount, remark) VALUES (?,?,?,?)')
-    .bind(expense_date, category, amount || 0, remark || '').run();
+export async function createCanteenOtherExpense(db, { expense_date, category, amount, actual_amount, params, remark }) {
+  const r = await db.prepare('INSERT INTO canteen_other_expenses (expense_date, category, amount, actual_amount, params, remark) VALUES (?,?,?,?,?,?)')
+    .bind(expense_date, category, amount || 0, actual_amount || 0, params || '', remark || '').run();
   return { id: r.meta.last_row_id };
 }
-export async function updateCanteenOtherExpense(db, id, { expense_date, category, amount, remark }) {
-  const r = await db.prepare("UPDATE canteen_other_expenses SET expense_date=?, category=?, amount=?, remark=?, updated_at=datetime('now','+8 hours') WHERE id=?")
-    .bind(expense_date, category, amount || 0, remark || '', id).run();
+export async function updateCanteenOtherExpense(db, id, { expense_date, category, amount, actual_amount, params, remark }) {
+  const r = await db.prepare("UPDATE canteen_other_expenses SET expense_date=?, category=?, amount=?, actual_amount=?, params=?, remark=?, updated_at=datetime('now','+8 hours') WHERE id=?")
+    .bind(expense_date, category, amount || 0, actual_amount || 0, params || '', remark || '', id).run();
   return r.meta.changes > 0;
 }
 export async function deleteCanteenOtherExpense(db, id) {
@@ -186,12 +186,12 @@ export async function upsertCanteenOtherExpenses(db, { month, items = [] } = {})
     const existing = await db.prepare("SELECT id FROM canteen_other_expenses WHERE substr(expense_date,1,7)=? AND category=?")
       .bind(month, it.category).first();
     if (existing) {
-      await db.prepare("UPDATE canteen_other_expenses SET amount=?, remark=?, updated_at=datetime('now','+8 hours') WHERE id=?")
-        .bind(Number(it.amount) || 0, it.remark || '', existing.id).run();
+      await db.prepare("UPDATE canteen_other_expenses SET amount=?, actual_amount=?, params=?, remark=?, updated_at=datetime('now','+8 hours') WHERE id=?")
+        .bind(Number(it.amount) || 0, Number(it.actual_amount) || 0, it.params || '', it.remark || '', existing.id).run();
       updated++;
     } else {
-      await db.prepare('INSERT INTO canteen_other_expenses (expense_date, category, amount, remark) VALUES (?,?,?,?)')
-        .bind(date, it.category, Number(it.amount) || 0, it.remark || '').run();
+      await db.prepare('INSERT INTO canteen_other_expenses (expense_date, category, amount, actual_amount, params, remark) VALUES (?,?,?,?,?,?)')
+        .bind(date, it.category, Number(it.amount) || 0, Number(it.actual_amount) || 0, it.params || '', it.remark || '').run();
       inserted++;
     }
   }
@@ -343,9 +343,9 @@ export async function canteenMonthlySummary(db, month) {
   // 食材采购支出
   const food = (await db.prepare(`
     SELECT IFNULL(SUM(total_amount),0) as amount FROM canteen_purchases WHERE substr(purchase_date,1,7)=?`).bind(m).first());
-  // 其他费用支出
+  // 其他费用支出（优先实际金额，无实际金额时用估算金额）
   const other = (await db.prepare(`
-    SELECT IFNULL(SUM(amount),0) as amount FROM canteen_other_expenses WHERE substr(expense_date,1,7)=?`).bind(m).first());
+    SELECT IFNULL(SUM(CASE WHEN actual_amount > 0 THEN actual_amount ELSE amount END),0) as amount FROM canteen_other_expenses WHERE substr(expense_date,1,7)=?`).bind(m).first());
   // 资源占用费
   const resource = (await db.prepare(`
     SELECT IFNULL(SUM(amount),0) as amount FROM canteen_resource_fees WHERE substr(fee_date,1,7)=?`).bind(m).first());
@@ -369,9 +369,9 @@ export async function canteenDailyTrend(db, month) {
   const expense = (await db.prepare(`
     SELECT purchase_date as date, SUM(total_amount) as amount FROM canteen_purchases
     WHERE substr(purchase_date,1,7)=? GROUP BY purchase_date ORDER BY purchase_date`).bind(m).all()).results;
-  // 当月其他费用总额（不按天归集）
+  // 当月其他费用总额（优先实际金额，无实际金额时用估算金额；不按天归集）
   const otherRow = (await db.prepare(`
-    SELECT IFNULL(SUM(amount),0) as amount FROM canteen_other_expenses WHERE substr(expense_date,1,7)=?`).bind(m).first());
+    SELECT IFNULL(SUM(CASE WHEN actual_amount > 0 THEN actual_amount ELSE amount END),0) as amount FROM canteen_other_expenses WHERE substr(expense_date,1,7)=?`).bind(m).first());
   // 当月天数
   const [y, mo] = m.split('-').map(Number);
   const daysInMonth = new Date(y, mo, 0).getDate();
@@ -398,7 +398,7 @@ export async function canteenExpenseBreakdown(db, month) {
   const food = (await db.prepare(`
     SELECT IFNULL(SUM(total_amount),0) as amount FROM canteen_purchases WHERE substr(purchase_date,1,7)=?`).bind(m).first());
   const others = (await db.prepare(`
-    SELECT category, SUM(amount) as amount FROM canteen_other_expenses
+    SELECT category, SUM(CASE WHEN actual_amount > 0 THEN actual_amount ELSE amount END) as amount FROM canteen_other_expenses
     WHERE substr(expense_date,1,7)=? GROUP BY category ORDER BY amount DESC`).bind(m).all()).results;
   return { food: food.amount || 0, others };
 }
@@ -445,9 +445,9 @@ export async function canteenMonthlyCompare(db, { from, to, year } = {}) {
   const foodRows = (await db.prepare(`
     SELECT substr(purchase_date,1,7) as month, SUM(total_amount) as food
     FROM canteen_purchases ${replaceCol(where, 'purchase_date')} GROUP BY substr(purchase_date,1,7) ORDER BY month`).bind(...params).all()).results;
-  // 其他费用按月
+  // 其他费用按月（优先实际金额，无实际金额时用估算金额）
   const otherRows = (await db.prepare(`
-    SELECT substr(expense_date,1,7) as month, SUM(amount) as other
+    SELECT substr(expense_date,1,7) as month, SUM(CASE WHEN actual_amount > 0 THEN actual_amount ELSE amount END) as other
     FROM canteen_other_expenses ${replaceCol(where, 'expense_date')} GROUP BY substr(expense_date,1,7) ORDER BY month`).bind(...params).all()).results;
   // 资源占用费按月
   const resourceRows = (await db.prepare(`
