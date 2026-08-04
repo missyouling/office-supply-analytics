@@ -411,11 +411,11 @@ app.get('/api/health', (c) => c.json({ ok: true, time: new Date().toISOString() 
 // ============ SPA 回退 ============
 const SPA_HTML = `<!doctype html>
 <html lang="zh-CN">
-  <head><meta charset="UTF-8" /><link rel="icon" type="image/svg+xml" href="/vite.svg" />
+  <head><meta charset="UTF-8" /><link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>综合管理平台</title>
-    <script type="module" crossorigin src="/assets/index-CAI1mIqJ.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-DhN9onhp.css">
+    <script type="module" crossorigin src="/assets/index-Dtwgexud.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-Dn46icR7.css">
   </head>
   <body><div id="root"></div></body>
 </html>`;
