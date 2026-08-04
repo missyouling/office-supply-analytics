@@ -430,8 +430,8 @@ const SPA_HTML = `<!doctype html>
   <head><meta charset="UTF-8" /><link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>综合管理平台</title>
-    <script type="module" crossorigin src="/assets/index-2P3Af7aP.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-BbyKeXRv.css">
+    <script type="module" crossorigin src="/assets/index-tzBVwRfQ.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-B0yRJ3Xa.css">
   </head>
   <body><div id="root"></div></body>
 </html>`;
