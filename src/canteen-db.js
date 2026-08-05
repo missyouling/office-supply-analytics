@@ -806,17 +806,18 @@ export async function canteenMonthlyCostSummary(db, month) {
   // 3. 退费（当月总额）
   const refund = (await db.prepare(`SELECT IFNULL(SUM(amount),0) as v FROM canteen_card_refunds WHERE substr(refund_date,1,7)=?`).bind(prefix).first());
 
-  // 4. 消费收入 = 午餐+晚餐金额（早餐只计收入不计入消费？模板口径：消费=刷卡消费）——按 total_amount 口径（含早餐）与每日盈亏明细一致
-  const consume = (await db.prepare(`SELECT IFNULL(SUM(lunch_amount + dinner_amount),0) as v FROM canteen_daily_income WHERE substr(income_date,1,7)=?`).bind(prefix).first());
+  // 4. 消费收入 = 早餐+午餐+晚餐刷卡金额（total_amount，与每日盈亏明细总收入口径一致）
+  const consume = (await db.prepare(`SELECT IFNULL(SUM(total_amount),0) as v FROM canteen_daily_income WHERE substr(income_date,1,7)=?`).bind(prefix).first());
 
   // 5. 收入（含早餐+资源费）与支出（食材采购总额 + 其他费用实际金额）计算盈亏
+  //    口径与「每日盈亏明细」一致：盈亏 = 收入（餐费+资源费）− 支出（食材采购+其他费用），退费不参与盈亏（单独列展示）
   const income = (await db.prepare(`SELECT IFNULL(SUM(total_amount),0) as v FROM canteen_daily_income WHERE substr(income_date,1,7)=?`).bind(prefix).first());
   const resource = (await db.prepare(`SELECT IFNULL(SUM(amount),0) as v FROM canteen_resource_fees WHERE substr(fee_date,1,7)=?`).bind(prefix).first());
   const foodTotal = (await db.prepare(`SELECT IFNULL(SUM(total_amount),0) as v FROM canteen_purchases WHERE substr(purchase_date,1,7)=?`).bind(prefix).first());
   const otherExp = (await db.prepare(`SELECT IFNULL(SUM(CASE WHEN actual_amount > 0 THEN actual_amount ELSE amount END),0) as v FROM canteen_other_expenses WHERE substr(expense_date,1,7)=?`).bind(prefix).first());
 
   const incomeTotal = (income.v || 0) + (resource.v || 0);
-  const expenseTotal = (foodTotal.v || 0) + (otherExp.v || 0) + (refund.v || 0); // 退费视为支出
+  const expenseTotal = (foodTotal.v || 0) + (otherExp.v || 0); // 退费不参与盈亏
 
   // 人均成本：与「每日盈亏明细/月度对比」口径一致 = 每日人均成本（(采购+分摊-早餐-资源费)/当日人次）的平均
   let perCapita = 0;
@@ -859,11 +860,11 @@ export async function canteenMonthlyCostSummary(db, month) {
     if (!dailyMap[r.date]) dailyMap[r.date] = { date: r.date, meat: 0, vegetable: 0, dry: 0, grain: 0, condiment: 0, otherFood: 0, recharge: 0, consume: 0, refund: 0, profit: 0 };
     dailyMap[r.date].refund += r.v || 0;
   }
-  // 每日消费（午餐+晚餐）+ 每日盈亏（收入-支出，收入=total_amount+资源费，支出=当日采购+分摊+退费）
-  const dailyIncome = (await db.prepare(`SELECT income_date as date, lunch_amount, dinner_amount, total_amount FROM canteen_daily_income WHERE substr(income_date,1,7)=?`).bind(prefix).all()).results;
+  // 每日消费（早餐+午餐+晚餐 total_amount）+ 每日盈亏（收入-支出，收入=total_amount+资源费，支出=当日采购+分摊，口径与每日盈亏明细一致）
+  const dailyIncome = (await db.prepare(`SELECT income_date as date, total_amount FROM canteen_daily_income WHERE substr(income_date,1,7)=?`).bind(prefix).all()).results;
   for (const r of dailyIncome) {
     if (!dailyMap[r.date]) dailyMap[r.date] = { date: r.date, meat: 0, vegetable: 0, dry: 0, grain: 0, condiment: 0, otherFood: 0, recharge: 0, consume: 0, refund: 0, profit: 0 };
-    dailyMap[r.date].consume += (r.lunch_amount || 0) + (r.dinner_amount || 0);
+    dailyMap[r.date].consume += r.total_amount || 0;
   }
   // 每日资源费（收入一部分）
   const dailyResource = (await db.prepare(`SELECT fee_date as date, IFNULL(SUM(amount),0) as v FROM canteen_resource_fees WHERE substr(fee_date,1,7)=? GROUP BY fee_date`).bind(prefix).all()).results;
@@ -873,16 +874,18 @@ export async function canteenMonthlyCostSummary(db, month) {
   const [dy, dmo] = prefix.split('-').map(Number);
   const daysInMonth = new Date(dy, dmo, 0).getDate();
   const dailyShare = daysInMonth > 0 ? (otherExp.v || 0) / daysInMonth : 0;
-  // 补齐当月每一天（含无数据日期，便于按 1-31 展示）
+  // 遍历当月每一天：只保留有数据的天（采购分类/充值/消费/退费任一 > 0），盈亏与每日盈亏明细一致
   const daily = [];
   for (let dd = 1; dd <= daysInMonth; dd++) {
     const dateStr = `${prefix}-${String(dd).padStart(2, '0')}`;
     const d = dailyMap[dateStr] || { date: dateStr, meat: 0, vegetable: 0, dry: 0, grain: 0, condiment: 0, otherFood: 0, recharge: 0, consume: 0, refund: 0, profit: 0 };
+    const hasData = d.meat || d.vegetable || d.dry || d.grain || d.condiment || d.otherFood || d.recharge || d.consume || d.refund;
+    if (!hasData) continue;
     const purchase = d.meat + d.vegetable + d.dry + d.grain + d.condiment + d.otherFood;
     const incomeDay = (await db.prepare(`SELECT total_amount FROM canteen_daily_income WHERE income_date=?`).bind(dateStr).first());
     const resDay = dailyResMap[dateStr] || 0;
     const inc = (incomeDay?.total_amount || 0) + resDay;
-    d.profit = inc - purchase - dailyShare - d.refund;
+    d.profit = inc - purchase - dailyShare; // 退费不参与盈亏，与每日盈亏明细一致
     daily.push(d);
   }
 
