@@ -154,6 +154,28 @@ CREATE TABLE IF NOT EXISTS canteen_card_recharges (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_canteen_recharges_sn ON canteen_card_recharges(external_sn);
 
+-- 饭卡退费记录表（CSV 导入，external_sn 卡流水号唯一去重）
+CREATE TABLE IF NOT EXISTS canteen_card_refunds (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  external_sn TEXT UNIQUE,
+  card_no TEXT DEFAULT '',
+  user_id TEXT DEFAULT '',
+  user_name TEXT NOT NULL DEFAULT '',
+  department_code TEXT DEFAULT '',
+  user_department TEXT DEFAULT '',
+  refund_date TEXT DEFAULT '',
+  amount REAL DEFAULT 0,
+  balance_recorded REAL,
+  operator TEXT DEFAULT '导入',
+  machine_no TEXT DEFAULT '',
+  bill_no TEXT DEFAULT '',
+  remark TEXT DEFAULT '',
+  created_at TEXT DEFAULT (datetime('now', '+8 hours')),
+  updated_at TEXT DEFAULT (datetime('now', '+8 hours'))
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_canteen_refunds_sn ON canteen_card_refunds(external_sn);
+CREATE INDEX IF NOT EXISTS idx_canteen_refunds_date ON canteen_card_refunds(refund_date);
+
 -- 食堂表索引
 CREATE INDEX IF NOT EXISTS idx_canteen_supplies_name ON canteen_supplies(name);
 CREATE INDEX IF NOT EXISTS idx_canteen_supplies_category ON canteen_supplies(category_id);

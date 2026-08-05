@@ -667,3 +667,188 @@ export async function importCanteenRecharges(db, { rows, mode = 'upsert', mappin
   }
   return result;
 }
+
+// =============================================
+// 饭卡退费（canteen_card_refunds）
+// =============================================
+
+// 列表
+export async function listCanteenRefunds(db, { month, year, keyword, page = 1, limit = 20 } = {}) {
+  const where = []; const params = [];
+  if (month) { where.push("substr(refund_date,1,7)=?"); params.push(month); }
+  if (year) { where.push("substr(refund_date,1,4)=?"); params.push(String(year)); }
+  if (keyword) { where.push('(user_name LIKE ? OR user_id LIKE ? OR card_no LIKE ? OR external_sn LIKE ?)'); params.push(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`, `%${keyword}%`); }
+  const w = where.length ? 'WHERE ' + where.join(' AND ') : '';
+  const total = (await db.prepare(`SELECT COUNT(*) as c FROM canteen_card_refunds ${w}`).bind(...params).first()).c;
+  const items = (await db.prepare(`SELECT * FROM canteen_card_refunds ${w} ORDER BY refund_date DESC, id DESC LIMIT ? OFFSET ?`).bind(...params, limit, (page - 1) * limit).all()).results;
+  return { items, total, page, limit };
+}
+
+export async function deleteCanteenRefund(db, id) {
+  await db.prepare('DELETE FROM canteen_card_refunds WHERE id=?').bind(id).run();
+  return { ok: true };
+}
+
+// 月度汇总
+export async function summaryCanteenRefunds(db, month) {
+  const m = month || new Date().toISOString().slice(0, 7);
+  const row = (await db.prepare(`
+    SELECT IFNULL(SUM(amount),0) as total, COUNT(*) as count, COUNT(DISTINCT user_name) as people
+    FROM canteen_card_refunds WHERE substr(refund_date,1,7)=?`).bind(m).first());
+  return { month: m, total: row.total || 0, count: row.count || 0, people: row.people || 0 };
+}
+
+// CSV 导入（支持 upsert / skip 模式）
+export async function importCanteenRefunds(db, { rows, mode = 'upsert', mapping = {} } = {}) {
+  const result = { total: 0, inserted: 0, updated: 0, skipped: 0, errors: [] };
+  if (!Array.isArray(rows)) return result;
+  result.total = rows.length;
+
+  const f = (row, key, fallback = '') => {
+    const v = row[key];
+    return v === undefined || v === null ? fallback : String(v).trim();
+  };
+  const cleanMoney = (v) => {
+    const n = parseFloat(String(v || '').replace(/[￥¥,\s]/g, ''));
+    return isNaN(n) ? null : n;
+  };
+  const cleanDate = (v) => {
+    const s = String(v || '').trim();
+    const m = s.match(/(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
+    if (!m) return '';
+    return `${m[1]}-${String(m[2]).padStart(2, '0')}-${String(m[3]).padStart(2, '0')}`;
+  };
+
+  const stmtInsert = db.prepare(`INSERT INTO canteen_card_refunds
+    (external_sn, card_no, user_id, user_name, department_code, user_department, refund_date, amount, balance_recorded, operator, machine_no, bill_no, remark)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+  const stmtUpdate = db.prepare(`UPDATE canteen_card_refunds SET
+    card_no=?, user_id=?, user_name=?, department_code=?, user_department=?, refund_date=?, amount=?, balance_recorded=?, operator=?, machine_no=?, bill_no=?, remark=?, updated_at=datetime('now','+8 hours')
+    WHERE external_sn=?`);
+
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i];
+    const external_sn = f(row, 'external_sn');
+    const user_name = f(row, 'user_name');
+    const refund_date = cleanDate(f(row, 'refund_date'));
+    const amount = cleanMoney(f(row, 'amount'));
+
+    const missing = [];
+    if (!external_sn) missing.push('外部编号缺失');
+    if (!user_name) missing.push('姓名缺失');
+    if (!refund_date) missing.push('日期缺失');
+    if (amount === null) missing.push('金额格式错误');
+    if (missing.length) {
+      result.errors.push({ row: i + 2, reason: missing.join('、') });
+      continue;
+    }
+
+    const rec = {
+      card_no: f(row, 'card_no'),
+      user_id: f(row, 'user_id'),
+      department_code: f(row, 'department_code'),
+      user_department: f(row, 'user_department'),
+      operator: f(row, 'operator', '导入') || '导入',
+      machine_no: f(row, 'machine_no'),
+      bill_no: f(row, 'bill_no'),
+      remark: f(row, 'remark'),
+      balance_recorded: cleanMoney(f(row, 'balance_recorded')),
+    };
+
+    const existing = await db.prepare('SELECT id FROM canteen_card_refunds WHERE external_sn=?').bind(external_sn).first();
+    if (existing) {
+      if (mode === 'skip') { result.skipped++; continue; }
+      await stmtUpdate.bind(
+        rec.card_no, rec.user_id, user_name, rec.department_code, rec.user_department,
+        refund_date, amount, rec.balance_recorded, rec.operator,
+        rec.machine_no, rec.bill_no, rec.remark, external_sn,
+      ).run();
+      result.updated++;
+    } else {
+      await stmtInsert.bind(
+        external_sn, rec.card_no, rec.user_id, user_name, rec.department_code, rec.user_department,
+        refund_date, amount, rec.balance_recorded, rec.operator,
+        rec.machine_no, rec.bill_no, rec.remark,
+      ).run();
+      result.inserted++;
+    }
+  }
+  return result;
+}
+
+// =============================================
+// 月度费用汇总（肉类/蔬菜/干杂/充值/消费/退费/盈亏）
+// 参考食堂费用明细模板：按月统计各类食材采购、充值、消费、退费、盈亏
+// =============================================
+export async function canteenMonthlyCostSummary(db, month) {
+  const m = month || new Date().toISOString().slice(0, 7);
+  const prefix = m.slice(0, 7);
+
+  // 1. 食材采购分类汇总（肉类/干杂/蔬菜/粮油/调味品/其他，按采购明细关联分类名）
+  const foodRows = (await db.prepare(`
+    SELECT IFNULL(c.name,'其他') as category, IFNULL(SUM(pi.subtotal),0) as amount
+    FROM canteen_purchase_items pi
+    LEFT JOIN canteen_purchases p ON pi.purchase_id = p.id
+    LEFT JOIN canteen_supplies s ON pi.supply_id = s.id
+    LEFT JOIN canteen_categories c ON s.category_id = c.id
+    WHERE substr(p.purchase_date,1,7)=?
+    GROUP BY c.name`).bind(prefix).all()).results;
+  const cat = { '肉类': 0, '干杂': 0, '蔬菜': 0, '粮油': 0, '调味品': 0, '其他': 0 };
+  for (const r of foodRows) {
+    const k = r.category || '其他';
+    if (k in cat) cat[k] = r.amount || 0;
+    else cat['其他'] += r.amount || 0;
+  }
+
+  // 2. 充值（当月总额）
+  const recharge = (await db.prepare(`SELECT IFNULL(SUM(amount),0) as v FROM canteen_card_recharges WHERE substr(recharge_date,1,7)=?`).bind(prefix).first());
+
+  // 3. 退费（当月总额）
+  const refund = (await db.prepare(`SELECT IFNULL(SUM(amount),0) as v FROM canteen_card_refunds WHERE substr(refund_date,1,7)=?`).bind(prefix).first());
+
+  // 4. 消费收入 = 午餐+晚餐金额（早餐只计收入不计入消费？模板口径：消费=刷卡消费）——按 total_amount 口径（含早餐）与每日盈亏明细一致
+  const consume = (await db.prepare(`SELECT IFNULL(SUM(lunch_amount + dinner_amount),0) as v FROM canteen_daily_income WHERE substr(income_date,1,7)=?`).bind(prefix).first());
+
+  // 5. 收入（含早餐+资源费）与支出（食材采购总额 + 其他费用实际金额）计算盈亏
+  const income = (await db.prepare(`SELECT IFNULL(SUM(total_amount),0) as v FROM canteen_daily_income WHERE substr(income_date,1,7)=?`).bind(prefix).first());
+  const resource = (await db.prepare(`SELECT IFNULL(SUM(amount),0) as v FROM canteen_resource_fees WHERE substr(fee_date,1,7)=?`).bind(prefix).first());
+  const foodTotal = (await db.prepare(`SELECT IFNULL(SUM(total_amount),0) as v FROM canteen_purchases WHERE substr(purchase_date,1,7)=?`).bind(prefix).first());
+  const otherExp = (await db.prepare(`SELECT IFNULL(SUM(CASE WHEN actual_amount > 0 THEN actual_amount ELSE amount END),0) as v FROM canteen_other_expenses WHERE substr(expense_date,1,7)=?`).bind(prefix).first());
+
+  const incomeTotal = (income.v || 0) + (resource.v || 0);
+  const expenseTotal = (foodTotal.v || 0) + (otherExp.v || 0) + (refund.v || 0); // 退费视为支出
+  return {
+    month: prefix,
+    meat: cat['肉类'], vegetable: cat['蔬菜'], dry: cat['干杂'],
+    grain: cat['粮油'], condiment: cat['调味品'], otherFood: cat['其他'],
+    recharge: recharge.v || 0,
+    consume: consume.v || 0,
+    refund: refund.v || 0,
+    income: incomeTotal,
+    expense: expenseTotal,
+    profit: incomeTotal - expenseTotal,
+  };
+}
+
+// 多个月度费用汇总（用于年度/自定义范围）
+export async function canteenMonthlyCostSummaryRange(db, { from, to, year } = {}) {
+  let months = [];
+  if (year) {
+    for (let mo = 1; mo <= 12; mo++) months.push(`${year}-${String(mo).padStart(2, '0')}`);
+  } else if (from && to) {
+    const [y1, m1] = from.split('-').map(Number);
+    const [y2, m2] = to.split('-').map(Number);
+    let y = y1, mo = m1;
+    while (y < y2 || (y === y2 && mo <= m2)) {
+      months.push(`${y}-${String(mo).padStart(2, '0')}`);
+      mo++;
+      if (mo > 12) { mo = 1; y++; }
+    }
+  }
+  const items = [];
+  for (const m of months) {
+    const r = await canteenMonthlyCostSummary(db, m);
+    if (r.meat || r.vegetable || r.dry || r.recharge || r.consume || r.refund || r.income || r.expense) items.push(r);
+  }
+  return items;
+}

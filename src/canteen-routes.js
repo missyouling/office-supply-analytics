@@ -16,6 +16,8 @@ import {
   canteenMonthlySummary, canteenDailyTrend, canteenExpenseBreakdown, canteenFoodCategoryShare,
   canteenTopSupplies, canteenMonthlyCompare, canteenSuggestions, exportCanteenPurchasesCsv,
   listCanteenRecharges, deleteCanteenRecharge, summaryCanteenRecharges, importCanteenRecharges,
+  listCanteenRefunds, deleteCanteenRefund, summaryCanteenRefunds, importCanteenRefunds,
+  canteenMonthlyCostSummary, canteenMonthlyCostSummaryRange,
 } from './canteen-db.js';
 
 const canteen = new Hono();
@@ -343,6 +345,103 @@ canteen.post('/recharges/import', async (c) => {
     }
     const result = await importCanteenRecharges(c.env.DB, { rows, mode, mapping });
     return c.json({ ok: true, data: result });
+  } catch (e) { return fail(c, e); }
+});
+
+// ============ 饭卡退费 ============
+canteen.get('/refunds', async (c) => {
+  try {
+    const { month, year, keyword, page, limit } = c.req.query();
+    const r = await listCanteenRefunds(c.env.DB, { month, year, keyword, page: Number(page) || 1, limit: Number(limit) || 20 });
+    return c.json(ok(r));
+  } catch (e) { return fail(c, e); }
+});
+canteen.get('/refunds/summary', async (c) => {
+  try { return c.json(ok(await summaryCanteenRefunds(c.env.DB, c.req.query('month')))); } catch (e) { return fail(c, e); }
+});
+canteen.delete('/refunds/:id', async (c) => {
+  try { await deleteCanteenRefund(c.env.DB, Number(c.req.param('id'))); return c.json(ok({})); } catch (e) { return fail(c, e); }
+});
+// CSV 导入：POST /api/canteen/refunds/import  (multipart: file + mode + mapping JSON)
+canteen.post('/refunds/import', async (c) => {
+  try {
+    const form = await c.req.parseBody();
+    const file = form['file'];
+    if (!file || typeof file === 'string' || !file.arrayBuffer) return c.json({ ok: false, error: '缺少 CSV 文件' }, 400);
+    const mode = String(form['mode'] || 'upsert');
+    let mapping = {};
+    try { mapping = JSON.parse(String(form['mapping'] || '{}')); } catch { mapping = {}; }
+
+    const buf = await file.arrayBuffer();
+    let text = '';
+    try { text = new TextDecoder('utf-8', { fatal: true }).decode(buf); }
+    catch { try { text = new TextDecoder('gbk').decode(buf); } catch { text = new TextDecoder('utf-8', { fatal: false }).decode(buf); } }
+    if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+
+    const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
+    if (lines.length < 2) return c.json({ ok: false, error: 'CSV 数据不足' }, 400);
+    const parseLine = (line) => {
+      const out = []; let cur = ''; let inQ = false;
+      for (let i = 0; i < line.length; i++) {
+        const ch = line[i];
+        if (ch === '"') { if (inQ && line[i + 1] === '"') { cur += '"'; i++; } else inQ = !inQ; }
+        else if (ch === ',' && !inQ) { out.push(cur); cur = ''; }
+        else cur += ch;
+      }
+      out.push(cur);
+      return out.map((s) => s.trim().replace(/^"|"$/g, ''));
+    };
+    const header = parseLine(lines[0]);
+    const norm = (h) => h.replace(/[|｜]/g, '').replace(/\s+/g, '').toLowerCase();
+    const headerNorm = header.map(norm);
+    const autoMap = (targets) => {
+      for (const t of targets) {
+        const idx = headerNorm.findIndex((h) => h.includes(t));
+        if (idx >= 0) return header[idx];
+      }
+      return '';
+    };
+    if (!mapping.external_sn) mapping.external_sn = autoMap(['卡流水号', '流水号', 'externalsn']);
+    if (!mapping.user_name) mapping.user_name = autoMap(['姓名', '用户名', 'username']);
+    if (!mapping.user_id) mapping.user_id = autoMap(['工号', 'userid', '员工编号']);
+    if (!mapping.card_no) mapping.card_no = autoMap(['卡号', 'cardno']);
+    if (!mapping.department_code) mapping.department_code = autoMap(['部门编号', 'departmentcode']);
+    if (!mapping.user_department) mapping.user_department = autoMap(['部门名称', '部门', 'department']);
+    if (!mapping.refund_date) mapping.refund_date = autoMap(['退款时间', '退款日期', '时间', 'refunddate']);
+    if (!mapping.amount) mapping.amount = autoMap(['退款金额', '金额', 'amount']);
+    if (!mapping.balance_recorded) mapping.balance_recorded = autoMap(['卡上余额', '卡余额', '余额', 'balance']);
+    if (!mapping.operator) mapping.operator = autoMap(['操作员', 'operator']);
+    if (!mapping.machine_no) mapping.machine_no = autoMap(['机号', 'machineno']);
+    if (!mapping.bill_no) mapping.bill_no = autoMap(['收支统计账单号', '账单号', 'billno']);
+
+    const required = ['external_sn', 'user_name', 'refund_date', 'amount'];
+    const missingCols = required.filter((k) => !mapping[k]);
+    if (missingCols.length) return c.json({ ok: false, error: `缺少必填列映射：${missingCols.join(', ')}`, debug: { header, mapping } }, 400);
+
+    const rows = [];
+    for (let i = 1; i < lines.length; i++) {
+      const cols = parseLine(lines[i]);
+      if (/汇总|合计|总计|小计/.test(cols[0] || '')) continue;
+      const row = {};
+      for (const [sysKey, colName] of Object.entries(mapping)) {
+        if (!colName) continue;
+        const idx = header.findIndex((h) => h === colName);
+        if (idx >= 0) row[sysKey] = cols[idx] || '';
+      }
+      rows.push(row);
+    }
+    const result = await importCanteenRefunds(c.env.DB, { rows, mode, mapping });
+    return c.json({ ok: true, data: result });
+  } catch (e) { return fail(c, e); }
+});
+
+// ============ 月度费用汇总（肉类/蔬菜/干杂/充值/消费/退费/盈亏） ============
+canteen.get('/analytics/cost-summary', async (c) => {
+  try {
+    const { month, from, to, year } = c.req.query();
+    if (month) return c.json(ok({ item: await canteenMonthlyCostSummary(c.env.DB, month) }));
+    const items = await canteenMonthlyCostSummaryRange(c.env.DB, { from, to, year });
+    return c.json(ok({ items }));
   } catch (e) { return fail(c, e); }
 });
 
