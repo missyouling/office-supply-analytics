@@ -59,50 +59,72 @@ office-supply-analytics/
 
 前端源码位于独立仓库 `office-supply-analytics-frontend`（React 18 + TS + shadcn/ui），构建后将 `dist/` 产物拷贝至本仓库 `public/`。
 
-## 部署步骤
+## 部署步骤（Cloudflare Workers + D1 详细指南）
 
 ### 前置条件
 
-1. 安装 [Node.js](https://nodejs.org/) >= 18
-2. 安装 [Wrangler CLI](https://developers.cloudflare.com/workers/wrangler/)：`npm install -g wrangler`
-3. 登录 Cloudflare：`wrangler login`
+1. 安装 [Node.js](https://nodejs.org/) >= 18（建议 20 LTS）
+2. 安装 [Wrangler CLI](https://developers.cloudflare.com/workers/wrangler/)：
 
-### 1. 安装依赖
+```bash
+npm install -g wrangler
+```
+
+### 1. 登录 Cloudflare 账号
+
+```bash
+wrangler login
+```
+
+浏览器会弹出 Cloudflare 授权页面，点击「Allow」完成登录。也可以在 Cloudflare 控制台（`dash.cloudflare.com` → 右上角头像 → My Profile → API Tokens → Create Token）创建 API Token 后使用：
+
+```bash
+# 需要 Worker Scripts:Edit + D1:Edit 权限（用你自己的 Token）
+export CLOUDFLARE_API_TOKEN=你的Token
+```
+
+### 2. 安装依赖
 
 ```bash
 cd office-supply-analytics
 npm install
 ```
 
-### 2. 创建 D1 数据库
+### 3. 创建 D1 数据库
 
 ```bash
 wrangler d1 create office-supply-db
 ```
 
-创建完成后将输出的 `database_id` 填入 `wrangler.toml`。
+命令会输出一段 JSON，其中 `database_id`（形如 `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`）填入 `wrangler.toml` 的 `[[d1_databases]]` 配置中。
 
-### 3. 初始化数据库
+### 4. 初始化数据库（重要：生产库必须加 --remote）
 
 ```bash
 # 办公用品模块表
-wrangler d1 execute office-supply-db --file=./schema.sql
-# 食堂管理模块表（在已有库上执行）
-wrangler d1 execute office-supply-db --file=./canteen-schema.sql
+wrangler d1 execute office-supply-db --remote --file=./schema.sql
+# 食堂管理模块表（在已有库上执行，含食材/充值/退费/菜单等表）
+wrangler d1 execute office-supply-db --remote --file=./canteen-schema.sql
 ```
 
-### 4. 本地开发 / 部署
+> ⚠️ `--remote` 参数表示操作 Cloudflare 线上数据库；**不加该参数只会操作本地模拟库**，线上会报 `no such table`。
+
+### 5. 本地开发 / 部署
 
 ```bash
-npm run dev        # 本地开发 http://localhost:8787
+npm run dev        # 本地开发 http://localhost:8787（本地需先 wrangler d1 migrations 或使用 --local 数据库）
 npm run deploy     # 部署到生产
 ```
 
 部署成功后访问 Wrangler 输出的 Worker 地址（如 `https://office-supply-analytics.<your-subdomain>.workers.dev`）。
 
-### 基础密码验证（可选）
+### 6. 绑定自定义域名（可选）
 
-部署到 Cloudflare Workers 后可设置环境变量开启密码验证，保护整个应用：
+Cloudflare 控制台 → Workers & Pages → 选择你的 Worker → Settings → Domains & Routes → Add → 输入已托管在 Cloudflare 的域名（如 `bg.example.com`），按提示完成 DNS 配置后即可通过自定义域名访问。
+
+### 7. 设置访问密码（可选）
+
+部署后可设置环境变量开启密码验证，保护整个应用：
 
 ```bash
 # 设置访问密码（未设置时默认密码 2153）
@@ -111,15 +133,24 @@ wrangler secret put PASS
 
 - 开启后访问任何页面都会先跳转登录页，密码通过服务端 `/api/auth/verify` 校验（前端不暴露密码明文）。
 - 登录状态保存在 `sessionStorage`（同标签页保持，关闭标签页失效）。
-- 顶部导航右侧提供「退出」按钮，点击后清除登录状态返回登录页。
+- 顶部导航右侧提供「退出」按钮（二次确认），点击后清除登录状态返回登录页。
+- 登录页背景为随机壁纸，右上角有 GitHub 仓库链接图标。
 
-### 前端构建
+### 8. 更新部署（前端改版后）
 
 ```bash
+# 在前端仓库构建
 cd office-supply-analytics-frontend
 npm run build
-# 将 dist/ 产物拷贝到后端仓库 public/ 后重新部署
+# 将 dist/ 产物拷入后端仓库 public/ 后重新部署
+cd ../office-supply-analytics
+rm -rf public/assets && cp -r ../office-supply-analytics-frontend/dist/assets public/
+cp ../office-supply-analytics-frontend/dist/index.html public/index.html
+# 同步 src/index.js 中的资源 hash（asset 文件名）
+npm run deploy
 ```
+
+> 前端仓库构建后 `dist/assets/` 中的 JS/CSS 文件名带 hash（如 `index-xxxxx.js`），部署前必须同步更新 `public/index.html` 与 `src/index.js` 内联的引用，否则会加载到旧资源。
 
 ## API 概览
 
