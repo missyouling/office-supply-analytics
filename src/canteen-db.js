@@ -817,6 +817,75 @@ export async function canteenMonthlyCostSummary(db, month) {
 
   const incomeTotal = (income.v || 0) + (resource.v || 0);
   const expenseTotal = (foodTotal.v || 0) + (otherExp.v || 0) + (refund.v || 0); // 退费视为支出
+
+  // 人均成本：与「每日盈亏明细/月度对比」口径一致 = 每日人均成本（(采购+分摊-早餐-资源费)/当日人次）的平均
+  let perCapita = 0;
+  try {
+    const trend = await canteenDailyTrend(db, prefix);
+    const days = trend.filter((d) => (d.count || 0) > 0);
+    if (days.length) {
+      const perDay = days.map((d) => (d.expense + d.share_expense - (d.breakfast || 0) - (d.resource || 0)) / d.count);
+      perCapita = Math.round((perDay.reduce((a, b) => a + b, 0) / perDay.length) * 100) / 100;
+    }
+  } catch { /* 人均不可用时为 0 */ }
+
+  // 6. 按日明细（当月每一天：各食材分类/充值/消费/退费/盈亏，供月度视图按天展示）
+  const dailyMap = {};
+  // 每日采购按分类
+  const dailyFood = (await db.prepare(`
+    SELECT p.purchase_date as date, IFNULL(c.name,'其他') as category, IFNULL(SUM(pi.subtotal),0) as amount
+    FROM canteen_purchase_items pi
+    LEFT JOIN canteen_purchases p ON pi.purchase_id = p.id
+    LEFT JOIN canteen_supplies s ON pi.supply_id = s.id
+    LEFT JOIN canteen_categories c ON s.category_id = c.id
+    WHERE substr(p.purchase_date,1,7)=?
+    GROUP BY p.purchase_date, c.name`).bind(prefix).all()).results;
+  for (const r of dailyFood) {
+    const d = r.date;
+    if (!dailyMap[d]) dailyMap[d] = { date: d, meat: 0, vegetable: 0, dry: 0, grain: 0, condiment: 0, otherFood: 0, recharge: 0, consume: 0, refund: 0, profit: 0 };
+    const k = r.category || '其他';
+    if (k in { '肉类': 1, '干杂': 1, '蔬菜': 1, '粮油': 1, '调味品': 1 }) dailyMap[d][{ '肉类': 'meat', '干杂': 'dry', '蔬菜': 'vegetable', '粮油': 'grain', '调味品': 'condiment' }[k]] += r.amount || 0;
+    else dailyMap[d].otherFood += r.amount || 0;
+  }
+  // 每日充值
+  const dailyRecharge = (await db.prepare(`SELECT substr(recharge_date,1,10) as date, IFNULL(SUM(amount),0) as v FROM canteen_card_recharges WHERE substr(recharge_date,1,7)=? GROUP BY substr(recharge_date,1,10)`).bind(prefix).all()).results;
+  for (const r of dailyRecharge) {
+    if (!dailyMap[r.date]) dailyMap[r.date] = { date: r.date, meat: 0, vegetable: 0, dry: 0, grain: 0, condiment: 0, otherFood: 0, recharge: 0, consume: 0, refund: 0, profit: 0 };
+    dailyMap[r.date].recharge += r.v || 0;
+  }
+  // 每日退费
+  const dailyRefund = (await db.prepare(`SELECT substr(refund_date,1,10) as date, IFNULL(SUM(amount),0) as v FROM canteen_card_refunds WHERE substr(refund_date,1,7)=? GROUP BY substr(refund_date,1,10)`).bind(prefix).all()).results;
+  for (const r of dailyRefund) {
+    if (!dailyMap[r.date]) dailyMap[r.date] = { date: r.date, meat: 0, vegetable: 0, dry: 0, grain: 0, condiment: 0, otherFood: 0, recharge: 0, consume: 0, refund: 0, profit: 0 };
+    dailyMap[r.date].refund += r.v || 0;
+  }
+  // 每日消费（午餐+晚餐）+ 每日盈亏（收入-支出，收入=total_amount+资源费，支出=当日采购+分摊+退费）
+  const dailyIncome = (await db.prepare(`SELECT income_date as date, lunch_amount, dinner_amount, total_amount FROM canteen_daily_income WHERE substr(income_date,1,7)=?`).bind(prefix).all()).results;
+  for (const r of dailyIncome) {
+    if (!dailyMap[r.date]) dailyMap[r.date] = { date: r.date, meat: 0, vegetable: 0, dry: 0, grain: 0, condiment: 0, otherFood: 0, recharge: 0, consume: 0, refund: 0, profit: 0 };
+    dailyMap[r.date].consume += (r.lunch_amount || 0) + (r.dinner_amount || 0);
+  }
+  // 每日资源费（收入一部分）
+  const dailyResource = (await db.prepare(`SELECT fee_date as date, IFNULL(SUM(amount),0) as v FROM canteen_resource_fees WHERE substr(fee_date,1,7)=? GROUP BY fee_date`).bind(prefix).all()).results;
+  const dailyResMap = {};
+  for (const r of dailyResource) dailyResMap[r.date] = r.v || 0;
+  // 每日其他费用分摊 = 当月其他费用总额 / 当月天数（与每日盈亏明细一致）
+  const [dy, dmo] = prefix.split('-').map(Number);
+  const daysInMonth = new Date(dy, dmo, 0).getDate();
+  const dailyShare = daysInMonth > 0 ? (otherExp.v || 0) / daysInMonth : 0;
+  // 补齐当月每一天（含无数据日期，便于按 1-31 展示）
+  const daily = [];
+  for (let dd = 1; dd <= daysInMonth; dd++) {
+    const dateStr = `${prefix}-${String(dd).padStart(2, '0')}`;
+    const d = dailyMap[dateStr] || { date: dateStr, meat: 0, vegetable: 0, dry: 0, grain: 0, condiment: 0, otherFood: 0, recharge: 0, consume: 0, refund: 0, profit: 0 };
+    const purchase = d.meat + d.vegetable + d.dry + d.grain + d.condiment + d.otherFood;
+    const incomeDay = (await db.prepare(`SELECT total_amount FROM canteen_daily_income WHERE income_date=?`).bind(dateStr).first());
+    const resDay = dailyResMap[dateStr] || 0;
+    const inc = (incomeDay?.total_amount || 0) + resDay;
+    d.profit = inc - purchase - dailyShare - d.refund;
+    daily.push(d);
+  }
+
   return {
     month: prefix,
     meat: cat['肉类'], vegetable: cat['蔬菜'], dry: cat['干杂'],
@@ -827,12 +896,38 @@ export async function canteenMonthlyCostSummary(db, month) {
     income: incomeTotal,
     expense: expenseTotal,
     profit: incomeTotal - expenseTotal,
+    perCapita,
+    daily,
   };
 }
 
-// 多个月度费用汇总（用于年度/自定义范围）
+// 多个月度费用汇总（用于年度/自定义范围；默认显示最近一个月（上月）及之前的全部数据）
 export async function canteenMonthlyCostSummaryRange(db, { from, to, year } = {}) {
   let months = [];
+  // 默认 to = 上月（如当前 8 月 → 显示到 2026-07），from = 最早有数据月份
+  if (!from && !to && !year) {
+    const now = new Date();
+    const ny = now.getFullYear(); const nm = now.getMonth() + 1;
+    let lastM = nm === 1 ? `${ny - 1}-12` : `${ny}-${String(nm - 1).padStart(2, '0')}`;
+    // 最早有数据月份（逐表查询取最小值，避免 D1 对 UNION ALL 数量限制）
+    const mins = [];
+    for (const [tbl, col] of [
+      ['canteen_daily_income', 'income_date'],
+      ['canteen_purchases', 'purchase_date'],
+      ['canteen_card_recharges', 'recharge_date'],
+      ['canteen_card_refunds', 'refund_date'],
+      ['canteen_other_expenses', 'expense_date'],
+      ['canteen_resource_fees', 'fee_date'],
+    ]) {
+      try {
+        const r = await db.prepare(`SELECT MIN(substr(${col},1,7)) as m FROM ${tbl} WHERE ${col} IS NOT NULL AND ${col} != ''`).first();
+        if (r?.m && /^\d{4}-\d{2}$/.test(r.m)) mins.push(r.m);
+      } catch { /* 表不存在则跳过 */ }
+    }
+    const firstM = mins.length ? mins.sort()[0].slice(0, 7) : lastM;
+    from = firstM < lastM ? firstM : lastM;
+    to = lastM;
+  }
   if (year) {
     for (let mo = 1; mo <= 12; mo++) months.push(`${year}-${String(mo).padStart(2, '0')}`);
   } else if (from && to) {
